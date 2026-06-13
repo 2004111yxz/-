@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}AI 中转平台{% endblock %}</title>
+    <title>{% block title %}墨冉{% endblock %}</title>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
         body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;min-height:100vh;color:#333}
         .layout{display:flex;min-height:100vh}
-        .sidebar{width:220px;background:#001529;color:white;padding:20px 0;flex-shrink:0}
-        .sidebar h2{text-align:center;padding:0 20px 20px;border-bottom:1px solid #1f3a5f;margin-bottom:10px}
-        .menu-item{display:block;padding:12px 25px;color:#b8c5d1;text-decoration:none;transition:all 0.2s}
-        .menu-item:hover,.menu-item.active{background:#1890ff;color:white}
+        .sidebar{width:180px;background:#ffffff;border-right:1px solid #e8e8e8;padding:20px 0;flex-shrink:0}
+        .sidebar h2{text-align:center;padding:0 20px 20px;border-bottom:1px solid #f0f0f0;margin-bottom:10px;color:#333;font-size:20px}
+        .menu-item{display:block;padding:12px 20px;color:#666;text-decoration:none;transition:all 0.2s;font-size:14px}
+        .menu-item:hover,.menu-item.active{background:#f0f5ff;color:#1890ff}
         .main{flex:1;padding:24px;overflow-y:auto}
         .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
         .card{background:white;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.08);margin-bottom:20px}
@@ -73,7 +73,7 @@
 <body>
     <div class="layout">
         <div class="sidebar">
-            <h2>🚀 AI 中转平台</h2>
+            <h2>墨冉</h2>
             {% for key, name, url in menu_items %}
                 <a href="{{ url }}" class="menu-item {{ 'active' if active_menu == key else '' }}">{{ name }}</a>
             {% endfor %}

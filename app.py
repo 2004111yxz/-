@@ -1124,8 +1124,20 @@ def chat_completions():
             prompt_tokens = result['usage'].get('prompt_tokens', 0)
             completion_tokens = result['usage'].get('completion_tokens', 0)
         else:
+            # 估算 token 数
             prompt_tokens = 0
             completion_tokens = 0
+            messages = body.get('messages', [])
+            for msg in messages:
+                content = msg.get('content', '')
+                if content:
+                    prompt_tokens += max(len(content) // 3, 1)
+            
+            # 从响应中估算 completion_tokens
+            if 'choices' in result and len(result['choices']) > 0:
+                content = result['choices'][0].get('message', {}).get('content', '')
+                if content:
+                    completion_tokens = max(len(content) // 3, 1)
         
         cost = (prompt_tokens / 1000) * model_cfg['input_price'] + (completion_tokens / 1000) * model_cfg['output_price']
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1190,6 +1202,14 @@ def stream_response(conn, user, model_cfg, body):
         prompt_tokens = 0
         completion_tokens = 0
         full_content = ""
+        
+        # 估算 prompt_tokens（如果上游不返回usage）
+        messages = body.get('messages', [])
+        for msg in messages:
+            content = msg.get('content', '')
+            if content:
+                # 简单估算：中文约1.5字符/token，英文约4字符/token
+                prompt_tokens += max(len(content) // 3, 1)
         
         def generate():
             nonlocal prompt_tokens, completion_tokens, full_content
