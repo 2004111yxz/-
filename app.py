@@ -78,6 +78,28 @@ def execute_query(conn, query, params=None, fetch=False):
         cursor.close()
         return None
 
+def migrate_models_table(conn):
+    """迁移 models 表，添加缺失的字段"""
+    try:
+        # 检查并添加 provider 列
+        if USE_POSTGRES:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'models' AND column_name = 'provider'")
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE models ADD COLUMN provider TEXT DEFAULT 'openai'")
+                logger.info("Added provider column to models table")
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(models)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'provider' not in columns:
+                cursor.execute("ALTER TABLE models ADD COLUMN provider TEXT DEFAULT 'openai'")
+                logger.info("Added provider column to models table")
+            cursor.close()
+    except Exception as e:
+        logger.warning(f"Failed to migrate models table: {e}")
+
 def init_db():
     conn = get_db()
     
@@ -198,6 +220,10 @@ def init_db():
         )
     ''')
     
+    conn.commit()
+    
+    # 迁移 models 表（添加缺失的字段）
+    migrate_models_table(conn)
     conn.commit()
     
     # 创建管理员账户
