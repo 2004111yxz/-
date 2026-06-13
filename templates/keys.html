@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}API 密钥 - AI 中转平台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px">
+        <h3 style="margin:0">我的 API 密钥</h3>
+        <form method="post" action="/keys/add">
+            <input name="name" placeholder="密钥名称" style="width:150px" required>
+            <button class="btn btn-primary" type="submit">新增密钥</button>
+        </form>
+    </div>
+    <table>
+        <tr><th>名称</th><th>密钥</th><th>状态</th><th>创建时间</th><th>操作</th></tr>
+        {% for k in keys %}
+        <tr>
+            <td>{{ k.name }}</td>
+            <td><code>{{ k.key }}</code></td>
+            <td>{% if k.status %}<span class="tag tag-green">启用</span>{% else %}<span class="tag tag-red">禁用</span>{% endif %}</td>
+            <td>{{ k.created_at }}</td>
+            <td>
+                <a href="/keys/toggle/{{ k.id }}" class="btn btn-default">{% if k.status %}禁用{% else %}启用{% endif %}</a>
+                <a href="/keys/delete/{{ k.id }}" class="btn btn-danger">删除</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}

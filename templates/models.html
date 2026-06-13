@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}模型列表 - AI 中转平台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>支持的模型列表</h3>
+    <table>
+        <tr><th>模型名称</th><th>模型ID</th><th>输入单价/千Token</th><th>输出单价/千Token</th><th>状态</th></tr>
+        {% for m in models %}
+        <tr>
+            <td>{{ m.display_name or m.name }}</td>
+            <td><code>{{ m.name }}</code></td>
+            <td>¥ {{ m.input_price|round(4) }}</td>
+            <td>¥ {{ m.output_price|round(4) }}</td>
+            <td><span class="tag tag-green">在线</span></td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}

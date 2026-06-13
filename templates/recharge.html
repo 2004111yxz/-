@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}卡密充值 - AI 中转平台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>卡密充值</h3>
+    {% if msg %}
+    <p class="{{ msg_type }}">{{ msg }}</p>
+    {% endif %}
+    <form method="post" class="form-row">
+        <input name="code" placeholder="请输入充值卡密" style="flex:1" required>
+        <button class="btn btn-primary" type="submit">立即充值</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>充值记录</h3>
+    <table>
+        <tr><th>卡密</th><th>面额</th><th>充值时间</th></tr>
+        {% if records %}
+        {% for r in records %}
+        <tr>
+            <td>{{ r.code }}</td>
+            <td style="color:#52c41a">+ ¥ {{ r.amount|round(2) }}</td>
+            <td>{{ r.used_at }}</td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr><td colspan="3" style="text-align:center;color:#8c8c8c;padding:20px">暂无充值记录</td></tr>
+        {% endif %}
+    </table>
+</div>
+{% endblock %}

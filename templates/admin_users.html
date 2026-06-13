@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}用户管理 - AI 中转平台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>用户管理</h3>
+    <table>
+        <tr><th>ID</th><th>用户名</th><th>余额</th><th>身份</th><th>状态</th><th>注册时间</th><th>操作</th></tr>
+        {% for u in users %}
+        <tr>
+            <td>{{ u.id }}</td>
+            <td>{{ u.username }}</td>
+            <td style="color:#1890ff;font-weight:bold">¥ {{ u.balance|round(2) }}</td>
+            <td>{% if u.is_admin %}<span class="tag tag-red">管理员</span>{% else %}普通用户{% endif %}</td>
+            <td>{% if u.status %}<span class="tag tag-green">正常</span>{% else %}<span class="tag tag-red">禁用</span>{% endif %}</td>
+            <td>{{ u.created_at }}</td>
+            <td><a href="/admin/user/edit/{{ u.id }}" class="btn btn-default">编辑</a></td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}

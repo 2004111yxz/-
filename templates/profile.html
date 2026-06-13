@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}个人设置 - AI 中转平台{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:500px">
+    <h3>修改密码</h3>
+    {% if msg %}
+    <p class="{{ msg_type }}">{{ msg }}</p>
+    {% endif %}
+    <form method="post">
+        <div class="form-row">
+            <label style="width:100px">原密码：</label>
+            <input name="old_password" type="password" placeholder="请输入原密码" style="flex:1" required>
+        </div>
+        <div class="form-row">
+            <label style="width:100px">新密码：</label>
+            <input name="new_password" type="password" placeholder="请输入新密码" style="flex:1" required>
+        </div>
+        <div class="form-row">
+            <label style="width:100px">确认密码：</label>
+            <input name="confirm_password" type="password" placeholder="请确认新密码" style="flex:1" required>
+        </div>
+        <button class="btn btn-primary" type="submit">保存修改</button>
+    </form>
+</div>
+{% endblock %}

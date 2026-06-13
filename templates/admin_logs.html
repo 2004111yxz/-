@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}调用日志 - AI 中转平台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>全局调用日志</h3>
+    <table>
+        <tr><th>用户</th><th>模型</th><th>总Token</th><th>费用</th><th>时间</th></tr>
+        {% if logs %}
+        {% for log in logs %}
+        <tr>
+            <td>{{ log.username or '未知' }}</td>
+            <td><span class="tag tag-blue">{{ log.model }}</span></td>
+            <td>{{ log.prompt_tokens + log.completion_tokens }}</td>
+            <td style="color:#ff4d4f">¥ {{ log.cost|round(4) }}</td>
+            <td>{{ log.created_at }}</td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr><td colspan="5" style="text-align:center;color:#8c8c8c;padding:30px">暂无记录</td></tr>
+        {% endif %}
+    </table>
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}模型管理 - AI 中转平台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px">
+        <h3 style="margin:0">模型管理</h3>
+        <button class="btn btn-primary" onclick="document.getElementById('addForm').style.display='block'">添加模型</button>
+    </div>
+    
+    <div id="addForm" style="display:none;background:#fafafa;padding:15px;border-radius:6px;margin-bottom:15px">
+        <form method="post" action="/admin/models/add">
+            <div class="form-row">
+                <input name="name" placeholder="模型ID (如 gpt-3.5-turbo)" required style="flex:1">
+                <input name="display_name" placeholder="显示名称" style="flex:1">
+            </div>
+            <div class="form-row">
+                <input name="base_url" placeholder="上游Base URL" required style="flex:1">
+                <input name="api_key" placeholder="上游API Key" required style="flex:1">
+            </div>
+            <div class="form-row">
+                <input name="input_price" type="number" step="0.0001" placeholder="输入单价/千Token" required style="flex:1">
+                <input name="output_price" type="number" step="0.0001" placeholder="输出单价/千Token" required style="flex:1">
+                <button class="btn btn-primary" type="submit">添加</button>
+            </div>
+        </form>
+    </div>
+    
+    <table>
+        <tr><th>模型ID</th><th>显示名</th><th>输入单价</th><th>输出单价</th><th>状态</th><th>操作</th></tr>
+        {% for m in models %}
+        <tr>
+            <td><code>{{ m.name }}</code></td>
+            <td>{{ m.display_name or '-' }}</td>
+            <td>¥ {{ m.input_price|round(4) }}/k</td>
+            <td>¥ {{ m.output_price|round(4) }}/k</td>
+            <td>{% if m.status %}<span class="tag tag-green">启用</span>{% else %}<span class="tag tag-red">禁用</span>{% endif %}</td>
+            <td>
+                <a href="/admin/models/toggle/{{ m.id }}" class="btn btn-default">切换</a>
+                <a href="/admin/models/delete/{{ m.id }}" class="btn btn-danger">删除</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}
