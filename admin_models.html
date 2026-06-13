@@ -1,0 +1,1185 @@
+{% extends "base.html" %}
+
+{% block title %}模型管理 - 墨冉AI{% endblock %}
+
+{% block content %}
+<div class="model-admin-container">
+    <!-- 左侧：模型列表 -->
+    <div class="model-sidebar">
+        <div class="card sidebar-card">
+            <div class="card-header">
+                <h3 class="card-title">模型列表</h3>
+                <span class="model-count">{{ models|length }} 个模型</span>
+            </div>
+            
+            <div class="model-list" id="modelList">
+                {% for m in models %}
+                <div class="model-item" data-model-id="{{ m.id }}" onclick="selectModel({{ m.id }})">
+                    <div class="model-item-header">
+                        <span class="model-item-name">{{ m.display_name or m.name }}</span>
+                        <span class="model-item-tag {{ 'tag-green' if m.status == 1 else 'tag-red' }}">{{ '启用' if m.status == 1 else '禁用' }}</span>
+                    </div>
+                    <div class="model-item-meta">
+                        <span class="model-item-id">ID: {{ m.id }}</span>
+                        <span class="model-item-provider">{{ get_provider_name(m.provider) }}</span>
+                    </div>
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <div class="empty-icon">🤖</div>
+                    <p>暂无模型</p>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <button class="btn btn-primary btn-full" onclick="createNewModel()">
+                <span class="btn-icon">+</span>
+                新建模型
+            </button>
+        </div>
+        
+        <!-- 修改历史 -->
+        <div class="card sidebar-card history-card" id="historyCard">
+            <div class="card-header">
+                <h3 class="card-title">修改历史</h3>
+            </div>
+            <div class="history-list" id="historyList">
+                <div class="empty-history">
+                    <p>选择模型查看历史</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 右侧：编辑表单 -->
+    <div class="model-form-area">
+        <div class="card form-card" id="editForm">
+            <div class="card-header form-header">
+                <h3 class="card-title" id="formTitle">选择模型进行编辑</h3>
+                <div class="form-actions">
+                    <span class="version-badge" id="modelVersion">版本: -</span>
+                </div>
+            </div>
+            
+            <form id="modelForm" method="post" onsubmit="submitForm(event)">
+                <input type="hidden" id="modelId" name="id" value="">
+                <input type="hidden" id="currentVersion" name="version" value="1">
+                
+                <div class="form-section">
+                    <h4 class="section-title">基本信息</h4>
+                    
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">模型名称 *</label>
+                            <input id="modelName" name="name" type="text" placeholder="如: gpt-3.5-turbo" required>
+                            <span class="form-hint">模型的唯一标识符，用于API调用</span>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">显示名称</label>
+                            <input id="displayName" name="display_name" type="text" placeholder="如: GPT-3.5 Turbo">
+                            <span class="form-hint">在界面上显示的友好名称</span>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">厂商</label>
+                            <select id="provider" name="provider">
+                                <option value="openai">OpenAI</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="doubao">豆包</option>
+                                <option value="baidu">百度文心</option>
+                                <option value="alibaba">阿里通义</option>
+                                <option value="anthropic">Anthropic</option>
+                                <option value="other">其他</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">状态</label>
+                            <select id="status" name="status">
+                                <option value="1">启用</option>
+                                <option value="0">禁用</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-section">
+                    <h4 class="section-title">API配置</h4>
+                    
+                    <div class="form-grid">
+                        <div class="form-group full-width">
+                            <label class="form-label">API 地址 *</label>
+                            <input id="baseUrl" name="base_url" type="text" placeholder="https://api.example.com/v1" required>
+                            <span class="form-hint">模型服务的API端点地址</span>
+                        </div>
+                        
+                        <div class="form-group full-width">
+                            <label class="form-label">API Key</label>
+                            <div class="input-group">
+                                <input id="apiKey" name="api_key" type="password" placeholder="sk-xxxxxxxxxx">
+                                <button type="button" class="btn btn-default input-group-btn" onclick="toggleApiKey()">
+                                    <span id="apiKeyToggle">👁️</span>
+                                </button>
+                            </div>
+                            <span class="form-hint">访问模型API所需的密钥</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-section">
+                    <h4 class="section-title">定价设置</h4>
+                    
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">输入价格 *</label>
+                            <div class="input-group">
+                                <span class="input-prefix">¥</span>
+                                <input id="inputPrice" name="input_price" type="number" step="0.0001" min="0" placeholder="0.0015" required>
+                                <span class="input-suffix">/千Token</span>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">输出价格 *</label>
+                            <div class="input-group">
+                                <span class="input-prefix">¥</span>
+                                <input id="outputPrice" name="output_price" type="number" step="0.0001" min="0" placeholder="0.002" required>
+                                <span class="input-suffix">/千Token</span>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">排序</label>
+                            <input id="sortOrder" name="sort" type="number" min="0" value="10">
+                            <span class="form-hint">数字越小越靠前</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-section">
+                    <h4 class="section-title">备注信息</h4>
+                    
+                    <div class="form-group full-width">
+                        <label class="form-label">备注</label>
+                        <textarea id="remark" name="remark" placeholder="模型说明、使用注意事项等..." rows="3"></textarea>
+                    </div>
+                </div>
+                
+                <!-- 加载遮罩 -->
+                <div id="loadingOverlay" class="loading-overlay" style="display:none">
+                    <div class="loading-spinner"></div>
+                    <span id="loadingText">加载中...</span>
+                </div>
+                
+                <!-- 表单反馈 -->
+                <div id="formFeedback" class="form-feedback" style="display:none">
+                    <span id="feedbackIcon"></span>
+                    <span id="feedbackMessage"></span>
+                </div>
+                
+                <!-- 操作按钮 -->
+                <div class="form-actions-bar">
+                    <button type="button" class="btn btn-default" onclick="resetForm()">
+                        <span class="btn-icon">↺</span>
+                        重置
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="showConfirmModal()">
+                        <span class="btn-icon">✓</span>
+                        保存修改
+                    </button>
+                    <button type="button" class="btn btn-danger" id="deleteBtn" style="display:none" onclick="showDeleteModal()">
+                        <span class="btn-icon">🗑️</span>
+                        删除模型
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 确认保存模态框 -->
+<div id="confirmModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">确认保存</h3>
+            <button class="modal-close" onclick="hideConfirmModal()">✕</button>
+        </div>
+        <p class="modal-message">确定要保存以下修改吗？</p>
+        <div class="change-summary" id="changeSummary"></div>
+        <div class="modal-actions">
+            <button class="btn btn-default" onclick="hideConfirmModal()">取消</button>
+            <button class="btn btn-primary" onclick="confirmSave()">确认保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- 删除确认模态框 -->
+<div id="deleteModal" class="modal-overlay">
+    <div class="modal modal-danger">
+        <div class="modal-header">
+            <h3 class="modal-title">确认删除</h3>
+            <button class="modal-close" onclick="hideDeleteModal()">✕</button>
+        </div>
+        <p class="modal-message">确定要删除该模型吗？此操作不可撤销！</p>
+        <div class="modal-actions">
+            <button class="btn btn-default" onclick="hideDeleteModal()">取消</button>
+            <button class="btn btn-danger" onclick="confirmDelete()">确认删除</button>
+        </div>
+    </div>
+</div>
+
+<script>
+var originalData = {};
+var apiKeyVisible = false;
+
+function showLoading(show, text) {
+    var overlay = document.getElementById('loadingOverlay');
+    var loadingText = document.getElementById('loadingText');
+    
+    if (overlay) {
+        overlay.style.display = show ? 'flex' : 'none';
+        if (loadingText && text) {
+            loadingText.textContent = text;
+        }
+    }
+}
+
+function get_provider_name(provider) {
+    var names = {
+        'openai': 'OpenAI',
+        'deepseek': 'DeepSeek',
+        'doubao': '豆包',
+        'baidu': '百度文心',
+        'alibaba': '阿里通义',
+        'anthropic': 'Anthropic',
+        'other': '其他'
+    };
+    return names[provider] || provider;
+}
+
+function selectModel(modelId) {
+    document.querySelectorAll('.model-item').forEach(function(item) {
+        item.classList.remove('active');
+    });
+    
+    var item = document.querySelector('.model-item[data-model-id="' + modelId + '"]');
+    if (item) {
+        item.classList.add('active');
+    }
+    
+    showLoading(true, '正在加载模型...');
+    
+    fetch('/admin/model/' + modelId)
+        .then(function(response) {
+            if (!response.ok) {
+                return response.json().then(function(err) {
+                    throw new Error(err.error || err.message || '加载失败 (HTTP ' + response.status + ')');
+                }).catch(function() {
+                    throw new Error('加载失败 (HTTP ' + response.status + ')');
+                });
+            }
+            return response.json();
+        })
+        .then(function(data) {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            
+            document.getElementById('formTitle').textContent = '编辑模型: ' + (data.display_name || data.name);
+            document.getElementById('modelVersion').textContent = '版本: ' + data.version;
+            
+            document.getElementById('modelId').value = data.id;
+            document.getElementById('currentVersion').value = data.version;
+            document.getElementById('modelName').value = data.name;
+            document.getElementById('displayName').value = data.display_name || '';
+            document.getElementById('provider').value = data.provider || 'openai';
+            document.getElementById('baseUrl').value = data.base_url;
+            document.getElementById('apiKey').value = data.api_key || '';
+            document.getElementById('inputPrice').value = data.input_price;
+            document.getElementById('outputPrice').value = data.output_price;
+            document.getElementById('sortOrder').value = data.sort || 10;
+            document.getElementById('status').value = data.status;
+            document.getElementById('remark').value = data.remark || '';
+            
+            originalData = JSON.parse(JSON.stringify(data));
+            
+            document.getElementById('deleteBtn').style.display = 'flex';
+            loadHistory(data.id);
+            showLoading(false);
+        })
+        .catch(function(error) {
+            showLoading(false);
+            showFeedback('error', '加载模型失败: ' + error.message);
+            // 重置选中状态
+            if (item) {
+                item.classList.remove('active');
+            }
+        });
+}
+
+function loadHistory(modelId) {
+    fetch('/admin/model/' + modelId + '/history')
+        .then(function(response) {
+            if (!response.ok) {
+                return response.json().then(function(err) {
+                    throw new Error(err.error || err.message || '加载失败');
+                }).catch(function() {
+                    throw new Error('加载历史失败');
+                });
+            }
+            return response.json();
+        })
+        .then(function(data) {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            
+            if (!data || data.length === 0) {
+                document.getElementById('historyList').innerHTML = '<div class="empty-history"><p>暂无修改记录</p></div>';
+                return;
+            }
+            
+            document.getElementById('historyList').innerHTML = data.map(function(h) {
+                return `
+                    <div class="history-item">
+                        <div class="history-header">
+                            <span class="history-time">${h.created_at}</span>
+                            <span class="history-version">v${h.version}</span>
+                        </div>
+                        <div class="history-changes">${h.changes}</div>
+                        <div class="history-footer">
+                            <span class="history-operator">操作人: ${h.operator || '系统'}</span>
+                            ${h.version > 1 ? `<button class="btn btn-default btn-sm" onclick="rollbackVersion(${h.model_id}, ${h.version})">恢复到此版本</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        })
+        .catch(function(error) {
+            showFeedback('error', '加载修改历史失败: ' + error.message);
+            document.getElementById('historyList').innerHTML = '<div class="empty-history"><p>加载历史失败: ' + error.message + '</p></div>';
+        });
+}
+
+function createNewModel() {
+    document.getElementById('formTitle').textContent = '新建模型';
+    document.getElementById('modelVersion').textContent = '版本: 1 (新建)';
+    
+    document.getElementById('modelId').value = '';
+    document.getElementById('currentVersion').value = '1';
+    document.getElementById('modelName').value = '';
+    document.getElementById('displayName').value = '';
+    document.getElementById('provider').value = 'openai';
+    document.getElementById('baseUrl').value = '';
+    document.getElementById('apiKey').value = '';
+    document.getElementById('inputPrice').value = '0.0015';
+    document.getElementById('outputPrice').value = '0.002';
+    document.getElementById('sortOrder').value = '10';
+    document.getElementById('status').value = '1';
+    document.getElementById('remark').value = '';
+    
+    originalData = {};
+    document.getElementById('deleteBtn').style.display = 'none';
+    
+    document.querySelectorAll('.model-item').forEach(function(item) {
+        item.classList.remove('active');
+    });
+    
+    document.getElementById('historyList').innerHTML = '<div class="empty-history"><p>保存后将显示修改记录</p></div>';
+    
+    document.getElementById('modelName').focus();
+}
+
+function toggleApiKey() {
+    var input = document.getElementById('apiKey');
+    var toggle = document.getElementById('apiKeyToggle');
+    apiKeyVisible = !apiKeyVisible;
+    input.type = apiKeyVisible ? 'text' : 'password';
+    toggle.textContent = apiKeyVisible ? '🙈' : '👁️';
+}
+
+function resetForm() {
+    if (document.getElementById('modelId').value) {
+        selectModel(document.getElementById('modelId').value);
+    } else {
+        createNewModel();
+    }
+}
+
+function showConfirmModal() {
+    var changes = getChanges();
+    
+    if (changes.length === 0) {
+        showFeedback('error', '没有任何修改需要保存');
+        return;
+    }
+    
+    document.getElementById('changeSummary').innerHTML = changes.map(function(c) {
+        return `
+            <div class="change-item">
+                <span class="change-field">${c.field}</span>
+                <div class="change-values">
+                    <span class="change-old">${c.old}</span>
+                    <span class="change-arrow">→</span>
+                    <span class="change-new">${c.new}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    document.getElementById('confirmModal').classList.add('active');
+}
+
+function hideConfirmModal() {
+    document.getElementById('confirmModal').classList.remove('active');
+}
+
+function validateForm() {
+    var errors = [];
+    var name = document.getElementById('modelName').value.trim();
+    var baseUrl = document.getElementById('baseUrl').value.trim();
+    var inputPrice = document.getElementById('inputPrice').value.trim();
+    var outputPrice = document.getElementById('outputPrice').value.trim();
+    
+    if (!name) {
+        errors.push('请输入模型名称');
+        document.getElementById('modelName').classList.add('error');
+    } else {
+        document.getElementById('modelName').classList.remove('error');
+    }
+    
+    if (!baseUrl) {
+        errors.push('请输入API基础地址');
+        document.getElementById('baseUrl').classList.add('error');
+    } else if (!isValidUrl(baseUrl)) {
+        errors.push('API基础地址格式不正确');
+        document.getElementById('baseUrl').classList.add('error');
+    } else {
+        document.getElementById('baseUrl').classList.remove('error');
+    }
+    
+    if (!inputPrice) {
+        errors.push('请输入输入价格');
+        document.getElementById('inputPrice').classList.add('error');
+    } else if (isNaN(parseFloat(inputPrice)) || parseFloat(inputPrice) < 0) {
+        errors.push('输入价格必须是非负数字');
+        document.getElementById('inputPrice').classList.add('error');
+    } else {
+        document.getElementById('inputPrice').classList.remove('error');
+    }
+    
+    if (!outputPrice) {
+        errors.push('请输入输出价格');
+        document.getElementById('outputPrice').classList.add('error');
+    } else if (isNaN(parseFloat(outputPrice)) || parseFloat(outputPrice) < 0) {
+        errors.push('输出价格必须是非负数字');
+        document.getElementById('outputPrice').classList.add('error');
+    } else {
+        document.getElementById('outputPrice').classList.remove('error');
+    }
+    
+    var apiKey = document.getElementById('apiKey').value.trim();
+    if (apiKey && apiKey.length < 10) {
+        errors.push('API密钥长度不足，请检查');
+        document.getElementById('apiKey').classList.add('error');
+    } else {
+        document.getElementById('apiKey').classList.remove('error');
+    }
+    
+    return errors;
+}
+
+function isValidUrl(string) {
+    try {
+        new URL(string);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function confirmSave() {
+    hideConfirmModal();
+    
+    var validationErrors = validateForm();
+    if (validationErrors.length > 0) {
+        showFeedback('error', '表单验证失败:\n' + validationErrors.join('\n'));
+        return;
+    }
+    
+    showLoading(true, '正在保存...');
+    
+    var formData = new FormData(document.getElementById('modelForm'));
+    
+    fetch('/admin/model/save', {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(response) {
+        if (!response.ok) {
+            return response.json().then(function(err) {
+                throw new Error(err.message || '保存失败 (HTTP ' + response.status + ')');
+            }).catch(function() {
+                throw new Error('保存失败 (HTTP ' + response.status + ')');
+            });
+        }
+        return response.json();
+    })
+    .then(function(data) {
+        showLoading(false);
+        
+        if (data.success) {
+            showFeedback('success', data.message);
+            if (data.model_id) {
+                selectModel(data.model_id);
+                refreshModelList();
+            }
+        } else {
+            showFeedback('error', data.message || '保存失败');
+        }
+    })
+    .catch(function(error) {
+        showLoading(false);
+        showFeedback('error', '保存失败: ' + error.message);
+    });
+}
+
+function showDeleteModal() {
+    document.getElementById('deleteModal').classList.add('active');
+}
+
+function hideDeleteModal() {
+    document.getElementById('deleteModal').classList.remove('active');
+}
+
+function confirmDelete() {
+    hideDeleteModal();
+    var modelId = document.getElementById('modelId').value;
+    
+    if (!modelId) {
+        showFeedback('error', '请选择要删除的模型');
+        return;
+    }
+    
+    showLoading(true, '正在删除...');
+    
+    fetch('/admin/model/' + modelId + '/delete', {
+        method: 'POST'
+    })
+    .then(function(response) {
+        if (!response.ok) {
+            return response.json().then(function(err) {
+                throw new Error(err.message || '删除失败 (HTTP ' + response.status + ')');
+            }).catch(function() {
+                throw new Error('删除失败 (HTTP ' + response.status + ')');
+            });
+        }
+        return response.json();
+    })
+    .then(function(data) {
+        showLoading(false);
+        
+        if (data.success) {
+            showFeedback('success', '删除成功');
+            createNewModel();
+            refreshModelList();
+        } else {
+            showFeedback('error', data.message || '删除失败');
+        }
+    })
+    .catch(function(error) {
+        showLoading(false);
+        showFeedback('error', '删除失败: ' + error.message);
+    });
+}
+
+function rollbackVersion(modelId, version) {
+    if (!confirm('确定要恢复到版本 ' + version + ' 吗？此操作将创建一个新的版本记录。')) {
+        return;
+    }
+    
+    showLoading(true, '正在恢复...');
+    
+    fetch('/admin/model/' + modelId + '/rollback/' + version, {
+        method: 'POST'
+    })
+    .then(function(response) {
+        if (!response.ok) {
+            return response.json().then(function(err) {
+                throw new Error(err.message || '恢复失败 (HTTP ' + response.status + ')');
+            }).catch(function() {
+                throw new Error('恢复失败 (HTTP ' + response.status + ')');
+            });
+        }
+        return response.json();
+    })
+    .then(function(data) {
+        showLoading(false);
+        
+        if (data.success) {
+            showFeedback('success', '恢复成功');
+            selectModel(modelId);
+        } else {
+            showFeedback('error', data.message || '恢复失败');
+        }
+    })
+    .catch(function(error) {
+        showLoading(false);
+        showFeedback('error', '恢复失败: ' + error.message);
+    });
+}
+
+function getChanges() {
+    var changes = [];
+    
+    if (document.getElementById('modelName').value !== (originalData.name || '')) {
+        changes.push({ field: '模型名称', old: originalData.name || '(空)', new: document.getElementById('modelName').value });
+    }
+    if (document.getElementById('displayName').value !== (originalData.display_name || '')) {
+        changes.push({ field: '显示名称', old: originalData.display_name || '(空)', new: document.getElementById('displayName').value || '(空)' });
+    }
+    if (document.getElementById('provider').value !== (originalData.provider || '')) {
+        changes.push({ field: '厂商', old: get_provider_name(originalData.provider || ''), new: get_provider_name(document.getElementById('provider').value) });
+    }
+    if (document.getElementById('baseUrl').value !== (originalData.base_url || '')) {
+        changes.push({ field: 'API地址', old: originalData.base_url || '(空)', new: document.getElementById('baseUrl').value });
+    }
+    if (document.getElementById('apiKey').value !== (originalData.api_key || '')) {
+        changes.push({ field: 'API Key', old: '***', new: '***' });
+    }
+    if (document.getElementById('inputPrice').value !== String(originalData.input_price || '')) {
+        changes.push({ field: '输入价格', old: originalData.input_price ? '¥' + originalData.input_price + '/千Token' : '(空)', new: '¥' + document.getElementById('inputPrice').value + '/千Token' });
+    }
+    if (document.getElementById('outputPrice').value !== String(originalData.output_price || '')) {
+        changes.push({ field: '输出价格', old: originalData.output_price ? '¥' + originalData.output_price + '/千Token' : '(空)', new: '¥' + document.getElementById('outputPrice').value + '/千Token' });
+    }
+    if (document.getElementById('sortOrder').value !== String(originalData.sort || '')) {
+        changes.push({ field: '排序', old: originalData.sort || '(空)', new: document.getElementById('sortOrder').value });
+    }
+    if (document.getElementById('status').value !== String(originalData.status || '')) {
+        changes.push({ field: '状态', old: originalData.status === 1 ? '启用' : (originalData.status === 0 ? '禁用' : '(空)'), new: document.getElementById('status').value === '1' ? '启用' : '禁用' });
+    }
+    if (document.getElementById('remark').value !== (originalData.remark || '')) {
+        var oldRemark = (originalData.remark || '');
+        var newRemark = document.getElementById('remark').value;
+        changes.push({ 
+            field: '备注', 
+            old: oldRemark.length > 30 ? oldRemark.substring(0, 30) + '...' : oldRemark || '(空)', 
+            new: newRemark.length > 30 ? newRemark.substring(0, 30) + '...' : newRemark || '(空)' 
+        });
+    }
+    
+    return changes;
+}
+
+function refreshModelList() {
+    fetch('/admin/models/list')
+        .then(function(response) {
+            if (!response.ok) {
+                return response.json().then(function(err) {
+                    throw new Error(err.error || err.message || '加载失败');
+                }).catch(function() {
+                    throw new Error('加载模型列表失败');
+                });
+            }
+            return response.json();
+        })
+        .then(function(models) {
+            if (models.error) {
+                throw new Error(models.error);
+            }
+            
+            if (!models || models.length === 0) {
+                document.getElementById('modelList').innerHTML = '<div class="empty-state"><div class="empty-icon">🤖</div><p>暂无模型</p></div>';
+                return;
+            }
+            
+            document.getElementById('modelList').innerHTML = models.map(function(m) {
+                return `
+                    <div class="model-item" data-model-id="${m.id}" onclick="selectModel(${m.id})">
+                        <div class="model-item-header">
+                            <span class="model-item-name">${m.display_name || m.name}</span>
+                            <span class="model-item-tag ${m.status == 1 ? 'tag-green' : 'tag-red'}">${m.status == 1 ? '启用' : '禁用'}</span>
+                        </div>
+                        <div class="model-item-meta">
+                            <span class="model-item-id">ID: ${m.id}</span>
+                            <span class="model-item-provider">${get_provider_name(m.provider)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        })
+        .catch(function(error) {
+            showFeedback('error', '加载模型列表失败: ' + error.message);
+            document.getElementById('modelList').innerHTML = '<div class="empty-state"><div class="empty-icon">❌</div><p>加载失败: ' + error.message + '</p></div>';
+        });
+}
+
+function showFeedback(type, message) {
+    var feedback = document.getElementById('formFeedback');
+    var icon = document.getElementById('feedbackIcon');
+    var msg = document.getElementById('feedbackMessage');
+    
+    feedback.className = 'form-feedback ' + type;
+    icon.textContent = type === 'success' ? '✓' : '✕';
+    msg.textContent = message;
+    feedback.style.display = 'flex';
+    
+    setTimeout(function() {
+        feedback.style.display = 'none';
+    }, 5000);
+}
+
+function submitForm(event) {
+    event.preventDefault();
+    showConfirmModal();
+}
+</script>
+
+<style>
+.model-admin-container {
+    display: flex;
+    gap: 24px;
+    height: calc(100vh - 160px);
+}
+
+.model-sidebar {
+    width: 320px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.sidebar-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.sidebar-card .card-header {
+    padding-bottom: 12px;
+}
+
+.model-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    padding: 2px 8px;
+    border-radius: 20px;
+}
+
+.model-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+.model-item {
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: 8px;
+    background: var(--bg-secondary);
+    border: 2px solid transparent;
+}
+
+.model-item:hover {
+    background: var(--primary-light);
+    transform: translateX(4px);
+}
+
+.model-item.active {
+    background: var(--primary-light);
+    border-color: var(--primary-color);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+}
+
+.model-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.model-item-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.model-item-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 12px;
+}
+
+.model-item-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.model-item-id {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.btn-full {
+    width: 100%;
+    margin-top: auto;
+    justify-content: center;
+    gap: 6px;
+}
+
+.btn-icon {
+    font-size: 14px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+}
+
+.empty-icon {
+    font-size: 40px;
+    margin-bottom: 12px;
+}
+
+.history-card {
+    flex: 0 0 320px;
+    min-height: 200px;
+}
+
+.history-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.history-item {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-light);
+    transition: background 0.2s ease;
+}
+
+.history-item:hover {
+    background: var(--bg-secondary);
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.history-time {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.history-version {
+    font-size: 11px;
+    background: var(--primary-light);
+    color: var(--primary-color);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.history-changes {
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+
+.history-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.empty-history {
+    text-align: center;
+    padding: 30px 20px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.model-form-area {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.form-card {
+    max-width: 800px;
+}
+
+.form-header {
+    align-items: center;
+}
+
+.version-badge {
+    font-size: 12px;
+    background: var(--primary-light);
+    color: var(--primary-color);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 500;
+}
+
+.form-section {
+    margin-bottom: 24px;
+}
+
+.section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group.full-width {
+    grid-column: 1 / -1;
+}
+
+.form-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.form-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.input-group {
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+
+.input-group input {
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+    border-right: none;
+}
+
+.input-group-btn {
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    border-left: none;
+    padding: 0 12px;
+}
+
+.input-prefix, .input-suffix {
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.input-prefix {
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+    border: 1px solid var(--border-color);
+    border-right: none;
+}
+
+.input-suffix {
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    border: 1px solid var(--border-color);
+    border-left: none;
+}
+
+.form-feedback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    margin-bottom: 16px;
+    font-size: 14px;
+}
+
+.form-feedback.success {
+    background: rgba(34, 197, 94, 0.1);
+    color: var(--success-color);
+    border-left: 3px solid var(--success-color);
+}
+
+.form-feedback.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--error-color);
+    border-left: 3px solid var(--error-color);
+}
+
+.form-feedback pre {
+    white-space: pre-wrap;
+    margin: 0;
+    font-family: inherit;
+}
+
+.form-group input.error,
+.form-group select.error,
+.form-group textarea.error {
+    border-color: var(--error-color);
+    background: rgba(239, 68, 68, 0.05);
+}
+
+.form-group input.error:focus,
+.form-group select.error:focus,
+.form-group textarea.error:focus {
+    border-color: var(--error-color);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+}
+
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    z-index: 100;
+    border-radius: var(--radius-lg);
+}
+
+.loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+#loadingText {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.form-actions-bar {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-light);
+}
+
+.change-summary {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-bottom: 20px;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.change-item {
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--border-color);
+}
+
+.change-item:last-child {
+    border-bottom: none;
+}
+
+.change-field {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-bottom: 4px;
+    display: block;
+}
+
+.change-values {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+}
+
+.change-old {
+    text-decoration: line-through;
+    color: var(--error-color);
+}
+
+.change-arrow {
+    color: var(--text-muted);
+}
+
+.change-new {
+    color: var(--success-color);
+    font-weight: 500;
+}
+
+.modal-danger {
+    border-top: 4px solid var(--error-color);
+}
+
+.modal-danger .modal-title {
+    color: var(--error-color);
+}
+
+@media (max-width: 1024px) {
+    .model-admin-container {
+        flex-direction: column;
+        height: auto;
+    }
+    
+    .model-sidebar {
+        width: 100%;
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+    
+    .sidebar-card {
+        flex: 1;
+        min-width: 300px;
+    }
+    
+    .history-card {
+        flex: 1;
+        min-width: 300px;
+    }
+    
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{% endblock %}
