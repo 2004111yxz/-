@@ -3,45 +3,458 @@
 {% block title %}模型管理 - AI 中转平台{% endblock %}
 
 {% block content %}
-<div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px">
-        <h3 style="margin:0">模型管理</h3>
-        <button class="btn btn-primary" onclick="document.getElementById('addForm').style.display='block'">添加模型</button>
+<div style="display:flex;gap:20px">
+    <div style="width:280px;flex-shrink:0">
+        <div class="card">
+            <h3>模型列表</h3>
+            <div style="max-height:500px;overflow-y:auto">
+                {% for m in models %}
+                <div class="model-card" data-model-id="{{ m.id }}" onclick="selectModel({{ m.id }})" style="cursor:pointer">
+                    <div class="model-header">
+                        <span class="model-name">{{ m.display_name or m.name }}</span>
+                        <span class="tag tag-green" style="font-size:10px">ID:{{ m.id }}</span>
+                    </div>
+                    <div style="font-size:12px;color:#8c8c8c">{{ m.name }}</div>
+                </div>
+                {% else %}
+                <p style="color:#8c8c8c;text-align:center;padding:20px">暂无模型</p>
+                {% endfor %}
+            </div>
+            <button class="btn btn-primary" style="width:100%;margin-top:15px" onclick="createNewModel()">新建模型</button>
+        </div>
+        
+        {% if model_history %}
+        <div class="card" style="margin-top:20px">
+            <h3>修改历史</h3>
+            <div style="max-height:300px;overflow-y:auto">
+                {% for h in model_history %}
+                <div style="padding:10px;border-bottom:1px solid #f0f0f0;position:relative">
+                    <div style="font-size:12px;color:#8c8c8c">{{ h.created_at }}</div>
+                    <div style="font-size:13px;margin-top:4px">{{ h.changes }}</div>
+                    <div style="font-size:11px;color:#bfbfbf;margin-top:2px">操作人: {{ h.operator or '系统' }}</div>
+                    {% if h.version > 1 %}
+                    <button class="btn btn-default" style="position:absolute;right:5px;top:5px;font-size:11px;padding:2px 8px" onclick="rollbackVersion({{ h.model_id }}, {{ h.version }})">恢复</button>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
     
-    <div id="addForm" style="display:none;background:#fafafa;padding:15px;border-radius:6px;margin-bottom:15px">
-        <form method="post" action="/admin/models/add">
-            <div class="form-row">
-                <input name="name" placeholder="模型ID (如 gpt-3.5-turbo)" required style="flex:1">
-                <input name="display_name" placeholder="显示名称" style="flex:1">
+    <div style="flex:1">
+        <div class="card" id="editForm">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+                <h3 id="formTitle">选择模型进行编辑</h3>
+                <div id="modelVersion" style="font-size:12px;color:#8c8c8c"></div>
             </div>
-            <div class="form-row">
-                <input name="base_url" placeholder="上游Base URL" required style="flex:1">
-                <input name="api_key" placeholder="上游API Key" required style="flex:1">
-            </div>
-            <div class="form-row">
-                <input name="input_price" type="number" step="0.0001" placeholder="输入单价/千Token" required style="flex:1">
-                <input name="output_price" type="number" step="0.0001" placeholder="输出单价/千Token" required style="flex:1">
-                <button class="btn btn-primary" type="submit">添加</button>
-            </div>
-        </form>
+            
+            <form id="modelForm" method="post" onsubmit="submitForm(event)">
+                <input type="hidden" id="modelId" name="id" value="">
+                <input type="hidden" id="currentVersion" name="version" value="1">
+                
+                <div class="form-row">
+                    <label style="width:120px">模型名称</label>
+                    <input id="modelName" name="name" type="text" placeholder="如: gpt-3.5-turbo" style="flex:1" required>
+                </div>
+                
+                <div class="form-row">
+                    <label style="width:120px">显示名称</label>
+                    <input id="displayName" name="display_name" type="text" placeholder="如: GPT-3.5 Turbo" style="flex:1">
+                </div>
+                
+                <div class="form-row">
+                    <label style="width:120px">厂商</label>
+                    <select id="provider" name="provider" style="flex:1">
+                        <option value="openai">OpenAI</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="doubao">豆包</option>
+                        <option value="baidu">百度文心</option>
+                        <option value="alibaba">阿里通义</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="other">其他</option>
+                    </select>
+                </div>
+                
+                <div class="form-row">
+                    <label style="width:120px">API 地址</label>
+                    <input id="baseUrl" name="base_url" type="text" placeholder="https://api.example.com" style="flex:1" required>
+                </div>
+                
+                <div class="form-row">
+                    <label style="width:120px">API Key</label>
+                    <input id="apiKey" name="api_key" type="text" placeholder="sk-xxxxxxxxxx" style="flex:1">
+                    <button type="button" class="btn btn-default" onclick="toggleApiKey()">显示/隐藏</button>
+                </div>
+                
+                <div class="form-row">
+                    <label style="width:120px">输入价格</label>
+                    <input id="inputPrice" name="input_price" type="number" step="0.0001" min="0" placeholder="0.0015" style="flex:1" required>
+                    <span style="color:#8c8c8c">元/千Token</span>
+                </div>
+                
+                <div class="form-row">
+                    <label style="width:120px">输出价格</label>
+                    <input id="outputPrice" name="output_price" type="number" step="0.0001" min="0" placeholder="0.002" style="flex:1" required>
+                    <span style="color:#8c8c8c">元/千Token</span>
+                </div>
+                
+                <div class="form-row">
+                    <label style="width:120px">排序</label>
+                    <input id="sortOrder" name="sort" type="number" min="0" value="10" style="width:100px">
+                </div>
+                
+                <div class="form-row">
+                    <label style="width:120px">状态</label>
+                    <select id="status" name="status" style="flex:1">
+                        <option value="1">启用</option>
+                        <option value="0">禁用</option>
+                    </select>
+                </div>
+                
+                <div class="form-row" style="flex-direction:column;align-items:flex-start">
+                    <label style="width:120px">备注</label>
+                    <textarea id="remark" name="remark" placeholder="模型说明..." rows="3" style="width:100%;max-width:600px"></textarea>
+                </div>
+                
+                <div id="formErrors" class="error" style="display:none"></div>
+                <div id="formSuccess" class="success" style="display:none"></div>
+                
+                <div style="display:flex;gap:10px;margin-top:20px">
+                    <button type="button" class="btn btn-default" onclick="resetForm()">重置</button>
+                    <button type="button" class="btn btn-primary" onclick="showConfirmModal()">保存修改</button>
+                    {% if selected_model %}
+                    <button type="button" class="btn btn-danger" onclick="showDeleteModal()">删除模型</button>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
     </div>
-    
-    <table>
-        <tr><th>模型ID</th><th>显示名</th><th>输入单价</th><th>输出单价</th><th>状态</th><th>操作</th></tr>
-        {% for m in models %}
-        <tr>
-            <td><code>{{ m.name }}</code></td>
-            <td>{{ m.display_name or '-' }}</td>
-            <td>¥ {{ m.input_price|round(4) }}/k</td>
-            <td>¥ {{ m.output_price|round(4) }}/k</td>
-            <td>{% if m.status %}<span class="tag tag-green">启用</span>{% else %}<span class="tag tag-red">禁用</span>{% endif %}</td>
-            <td>
-                <a href="/admin/models/toggle/{{ m.id }}" class="btn btn-default">切换</a>
-                <a href="/admin/models/delete/{{ m.id }}" class="btn btn-danger">删除</a>
-            </td>
-        </tr>
-        {% endfor %}
-    </table>
 </div>
+
+<div id="confirmModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="background:white;border-radius:8px;padding:24px;max-width:450px;width:90%">
+        <h3 style="margin-bottom:15px">确认保存</h3>
+        <p style="color:#595959;margin-bottom:20px" id="confirmMessage">确定要保存对模型的修改吗？</p>
+        <div id="changeSummary" style="background:#f5f5f5;padding:15px;border-radius:4px;margin-bottom:20px;max-height:200px;overflow-y:auto"></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px">
+            <button class="btn btn-default" onclick="hideConfirmModal()">取消</button>
+            <button class="btn btn-primary" onclick="confirmSave()">确认保存</button>
+        </div>
+    </div>
+</div>
+
+<div id="deleteModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="background:white;border-radius:8px;padding:24px;max-width:400px;width:90%">
+        <h3 style="margin-bottom:15px;color:#ff4d4f">确认删除</h3>
+        <p style="color:#595959;margin-bottom:20px">确定要删除该模型吗？此操作不可撤销！</p>
+        <div style="display:flex;justify-content:flex-end;gap:10px">
+            <button class="btn btn-default" onclick="hideDeleteModal()">取消</button>
+            <button class="btn btn-danger" onclick="confirmDelete()">确认删除</button>
+        </div>
+    </div>
+</div>
+
+<script>
+var originalData = {};
+var apiKeyVisible = false;
+
+function selectModel(modelId) {
+    document.querySelectorAll('.model-card').forEach(function(card) {
+        card.classList.remove('selected');
+    });
+    
+    var card = document.querySelector('.model-card[data-model-id="' + modelId + '"]');
+    if (card) {
+        card.classList.add('selected');
+    }
+    
+    fetch('/admin/model/' + modelId)
+        .then(function(response) {
+            if (!response.ok) throw new Error('加载失败');
+            return response.json();
+        })
+        .then(function(data) {
+            document.getElementById('formTitle').textContent = '编辑模型: ' + (data.display_name || data.name);
+            document.getElementById('modelVersion').textContent = '版本: ' + data.version;
+            
+            document.getElementById('modelId').value = data.id;
+            document.getElementById('currentVersion').value = data.version;
+            document.getElementById('modelName').value = data.name;
+            document.getElementById('displayName').value = data.display_name || '';
+            document.getElementById('provider').value = data.provider || 'openai';
+            document.getElementById('baseUrl').value = data.base_url;
+            document.getElementById('apiKey').value = data.api_key || '';
+            document.getElementById('inputPrice').value = data.input_price;
+            document.getElementById('outputPrice').value = data.output_price;
+            document.getElementById('sortOrder').value = data.sort || 10;
+            document.getElementById('status').value = data.status;
+            document.getElementById('remark').value = data.remark || '';
+            
+            originalData = JSON.parse(JSON.stringify(data));
+            
+            loadHistory(data.id);
+        })
+        .catch(function(error) {
+            showError('加载模型失败: ' + error.message);
+        });
+}
+
+function loadHistory(modelId) {
+    fetch('/admin/model/' + modelId + '/history')
+        .then(function(response) {
+            if (!response.ok) throw new Error('加载失败');
+            return response.json();
+        })
+        .then(function(data) {
+            document.querySelector('.card:nth-child(2)').innerHTML = `
+                <h3>修改历史</h3>
+                <div style="max-height:300px;overflow-y:auto">
+                    ${data.length > 0 ? data.map(function(h) {
+                        return `
+                            <div style="padding:10px;border-bottom:1px solid #f0f0f0;position:relative">
+                                <div style="font-size:12px;color:#8c8c8c">${h.created_at}</div>
+                                <div style="font-size:13px;margin-top:4px">${h.changes}</div>
+                                <div style="font-size:11px;color:#bfbfbf;margin-top:2px">操作人: ${h.operator || '系统'}</div>
+                                ${h.version > 1 ? `<button class="btn btn-default" style="position:absolute;right:5px;top:5px;font-size:11px;padding:2px 8px" onclick="rollbackVersion(${h.model_id}, ${h.version})">恢复</button>` : ''}
+                            </div>
+                        `;
+                    }).join('') : '<p style="color:#8c8c8c;text-align:center;padding:20px">暂无修改记录</p>'}
+                </div>
+            `;
+        })
+        .catch(function() {});
+}
+
+function createNewModel() {
+    document.getElementById('formTitle').textContent = '新建模型';
+    document.getElementById('modelVersion').textContent = '版本: 1 (新建)';
+    
+    document.getElementById('modelId').value = '';
+    document.getElementById('currentVersion').value = '1';
+    document.getElementById('modelName').value = '';
+    document.getElementById('displayName').value = '';
+    document.getElementById('provider').value = 'openai';
+    document.getElementById('baseUrl').value = '';
+    document.getElementById('apiKey').value = '';
+    document.getElementById('inputPrice').value = '0.0015';
+    document.getElementById('outputPrice').value = '0.002';
+    document.getElementById('sortOrder').value = '10';
+    document.getElementById('status').value = '1';
+    document.getElementById('remark').value = '';
+    
+    originalData = {};
+    
+    document.querySelectorAll('.model-card').forEach(function(card) {
+        card.classList.remove('selected');
+    });
+    
+    document.querySelector('.card:nth-child(2)').innerHTML = '<h3>修改历史</h3><p style="color:#8c8c8c;text-align:center;padding:20px">保存后将显示修改记录</p>';
+}
+
+function toggleApiKey() {
+    var input = document.getElementById('apiKey');
+    apiKeyVisible = !apiKeyVisible;
+    input.type = apiKeyVisible ? 'text' : 'password';
+}
+
+function resetForm() {
+    if (document.getElementById('modelId').value) {
+        selectModel(document.getElementById('modelId').value);
+    } else {
+        createNewModel();
+    }
+}
+
+function showConfirmModal() {
+    var changes = getChanges();
+    
+    if (changes.length === 0) {
+        showError('没有任何修改需要保存');
+        return;
+    }
+    
+    document.getElementById('confirmMessage').textContent = '确定要保存以下修改吗？';
+    document.getElementById('changeSummary').innerHTML = changes.map(function(c) {
+        return `<div style="padding:5px 0;border-bottom:1px dashed #e8e8e8">
+            <span style="color:#8c8c8c">${c.field}:</span>
+            <span style="margin-left:10px;text-decoration:line-through;color:#bfbfbf">${c.old}</span>
+            <span style="margin-left:10px;color:#52c41a">${c.new}</span>
+        </div>`;
+    }).join('');
+    
+    document.getElementById('confirmModal').style.display = 'flex';
+}
+
+function hideConfirmModal() {
+    document.getElementById('confirmModal').style.display = 'none';
+}
+
+function confirmSave() {
+    hideConfirmModal();
+    
+    var formData = new FormData(document.getElementById('modelForm'));
+    
+    fetch('/admin/model/save', {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(response) {
+        return response.json();
+    })
+    .then(function(data) {
+        if (data.success) {
+            showSuccess(data.message);
+            if (data.model_id) {
+                selectModel(data.model_id);
+                refreshModelList();
+            }
+        } else {
+            showError(data.message);
+        }
+    })
+    .catch(function(error) {
+        showError('保存失败: ' + error.message);
+    });
+}
+
+function showDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'flex';
+}
+
+function hideDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'none';
+}
+
+function confirmDelete() {
+    hideDeleteModal();
+    var modelId = document.getElementById('modelId').value;
+    
+    fetch('/admin/model/' + modelId + '/delete', {
+        method: 'POST'
+    })
+    .then(function(response) {
+        return response.json();
+    })
+    .then(function(data) {
+        if (data.success) {
+            showSuccess('删除成功');
+            createNewModel();
+            refreshModelList();
+        } else {
+            showError(data.message);
+        }
+    })
+    .catch(function(error) {
+        showError('删除失败: ' + error.message);
+    });
+}
+
+function rollbackVersion(modelId, version) {
+    if (!confirm('确定要恢复到版本 ' + version + ' 吗？')) {
+        return;
+    }
+    
+    fetch('/admin/model/' + modelId + '/rollback/' + version, {
+        method: 'POST'
+    })
+    .then(function(response) {
+        return response.json();
+    })
+    .then(function(data) {
+        if (data.success) {
+            showSuccess('恢复成功');
+            selectModel(modelId);
+        } else {
+            showError(data.message);
+        }
+    })
+    .catch(function(error) {
+        showError('恢复失败: ' + error.message);
+    });
+}
+
+function getChanges() {
+    var changes = [];
+    
+    if (document.getElementById('modelName').value !== (originalData.name || '')) {
+        changes.push({ field: '模型名称', old: originalData.name || '', new: document.getElementById('modelName').value });
+    }
+    if (document.getElementById('displayName').value !== (originalData.display_name || '')) {
+        changes.push({ field: '显示名称', old: originalData.display_name || '', new: document.getElementById('displayName').value });
+    }
+    if (document.getElementById('provider').value !== (originalData.provider || '')) {
+        changes.push({ field: '厂商', old: originalData.provider || '', new: document.getElementById('provider').value });
+    }
+    if (document.getElementById('baseUrl').value !== (originalData.base_url || '')) {
+        changes.push({ field: 'API地址', old: originalData.base_url || '', new: document.getElementById('baseUrl').value });
+    }
+    if (document.getElementById('apiKey').value !== (originalData.api_key || '')) {
+        changes.push({ field: 'API Key', old: '***', new: '***' });
+    }
+    if (document.getElementById('inputPrice').value !== String(originalData.input_price || '')) {
+        changes.push({ field: '输入价格', old: originalData.input_price || '', new: document.getElementById('inputPrice').value });
+    }
+    if (document.getElementById('outputPrice').value !== String(originalData.output_price || '')) {
+        changes.push({ field: '输出价格', old: originalData.output_price || '', new: document.getElementById('outputPrice').value });
+    }
+    if (document.getElementById('sortOrder').value !== String(originalData.sort || '')) {
+        changes.push({ field: '排序', old: originalData.sort || '', new: document.getElementById('sortOrder').value });
+    }
+    if (document.getElementById('status').value !== String(originalData.status || '')) {
+        changes.push({ field: '状态', old: originalData.status === 1 ? '启用' : '禁用', new: document.getElementById('status').value === '1' ? '启用' : '禁用' });
+    }
+    if (document.getElementById('remark').value !== (originalData.remark || '')) {
+        changes.push({ field: '备注', old: (originalData.remark || '').substring(0, 20) + ((originalData.remark || '').length > 20 ? '...' : ''), new: document.getElementById('remark').value.substring(0, 20) + (document.getElementById('remark').value.length > 20 ? '...' : '') });
+    }
+    
+    return changes;
+}
+
+function refreshModelList() {
+    fetch('/admin/models/list')
+        .then(function(response) {
+            return response.json();
+        })
+        .then(function(models) {
+            var html = models.map(function(m) {
+                return `<div class="model-card" data-model-id="${m.id}" onclick="selectModel(${m.id})" style="cursor:pointer">
+                    <div class="model-header">
+                        <span class="model-name">${m.display_name || m.name}</span>
+                        <span class="tag tag-green" style="font-size:10px">ID:${m.id}</span>
+                    </div>
+                    <div style="font-size:12px;color:#8c8c8c">${m.name}</div>
+                </div>`;
+            }).join('');
+            
+            document.querySelector('.card:first-child > div:last-child').innerHTML = html;
+        })
+        .catch(function() {});
+}
+
+function showError(message) {
+    document.getElementById('formErrors').textContent = message;
+    document.getElementById('formErrors').style.display = 'block';
+    document.getElementById('formSuccess').style.display = 'none';
+    
+    setTimeout(function() {
+        document.getElementById('formErrors').style.display = 'none';
+    }, 5000);
+}
+
+function showSuccess(message) {
+    document.getElementById('formSuccess').textContent = message;
+    document.getElementById('formSuccess').style.display = 'block';
+    document.getElementById('formErrors').style.display = 'none';
+    
+    setTimeout(function() {
+        document.getElementById('formSuccess').style.display = 'none';
+    }, 5000);
+}
+
+function submitForm(event) {
+    event.preventDefault();
+    showConfirmModal();
+}
+</script>
 {% endblock %}
