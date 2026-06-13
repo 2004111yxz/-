@@ -1,7 +1,7 @@
 import requests
 
-api_key = "sk-371bbfda9100439d9f285a46038927c5"
-base_url = "http://127.0.0.1:5000/v1"
+api_key = "sk-4b7824c8ca9d4292a33576dd12c06fea"
+base_url = "http://127.0.0.1:5000/v1"  # 测试本地服务器
 
 headers = {
     "Content-Type": "application/json",
@@ -10,12 +10,12 @@ headers = {
 
 data = {
     "model": "deepseek-chat",
-    "messages": [{"role": "user", "content": "Hello"}]  # 使用英文避免编码问题
+    "messages": [{"role": "user", "content": "Hello"}]
 }
 
 try:
-    response = requests.post(f"{base_url}/chat/completions", headers=headers, json=data)
-    print("状态码:", response.status_code)
-    print("响应:", response.text)
+    response = requests.post(f"{base_url}/chat/completions", headers=headers, json=data, timeout=30)
+    print("Status:", response.status_code)
+    print("Response:", response.text)
 except Exception as e:
-    print("错误:", str(e))
+    print("Error:", str(e))
