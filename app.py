@@ -1032,7 +1032,7 @@ def chat_completions():
     try:
         resp = requests.post(
             f"{model_cfg['base_url']}/chat/completions",
-            json=body,
+            json={**body, 'stream': False},  # 强制禁用流式响应
             headers={
                 'Authorization': f"Bearer {model_cfg['api_key']}",
                 'Content-Type': 'application/json'
@@ -1045,12 +1045,32 @@ def chat_completions():
             logger.error(f"Empty response from upstream: {model_name}")
             return {"error": {"message": "Empty response from upstream service"}}, 503, {'Access-Control-Allow-Origin': '*'}
         
-        try:
-            result = resp.json()
-        except ValueError:
-            conn.close()
-            logger.error(f"Invalid JSON response: {resp.text[:200]}")
-            return {"error": {"message": f"Invalid response from upstream: {resp.text[:100]}"}}, 503, {'Access-Control-Allow-Origin': '*'}
+        # 处理可能的 SSE 格式响应
+        response_text = resp.text.strip()
+        if response_text.startswith('data: '):
+            # 解析 SSE 格式，提取第一个完整的 JSON
+            lines = response_text.split('\n')
+            for line in lines:
+                if line.startswith('data: '):
+                    json_str = line[5:].strip()
+                    if json_str and json_str != '[DONE]':
+                        try:
+                            import json
+                            result = json.loads(json_str)
+                            break
+                        except ValueError:
+                            continue
+            else:
+                conn.close()
+                logger.error("No valid JSON found in SSE response")
+                return {"error": {"message": "Invalid SSE response format"}}, 503, {'Access-Control-Allow-Origin': '*'}
+        else:
+            try:
+                result = resp.json()
+            except ValueError:
+                conn.close()
+                logger.error(f"Invalid JSON response: {resp.text[:200]}")
+                return {"error": {"message": f"Invalid response from upstream: {resp.text[:100]}"}}, 503, {'Access-Control-Allow-Origin': '*'}
         
         if 'usage' in result:
             prompt_tokens = result['usage'].get('prompt_tokens', 0)
