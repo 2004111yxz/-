@@ -6,7 +6,7 @@
 <div class="stats">
     <div class="stat-card">
         <div class="label">账户余额</div>
-        <div class="num">¥ {{ user.balance|round(2) }}</div>
+        <div class="num">¥ {{ (user.balance|round(2)) if user else 0 }}</div>
     </div>
     <div class="stat-card">
         <div class="label">今日消费</div>
