@@ -129,12 +129,27 @@ def init_db():
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE NOT NULL,
             display_name TEXT,
+            provider TEXT DEFAULT 'openai',
             base_url TEXT NOT NULL,
             api_key TEXT NOT NULL,
             input_price REAL NOT NULL,
             output_price REAL NOT NULL,
             status INTEGER DEFAULT 1,
-            sort INTEGER DEFAULT 0
+            sort INTEGER DEFAULT 0,
+            remark TEXT,
+            version INTEGER DEFAULT 1
+        )
+    ''')
+    
+    # 创建模型历史表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS model_history (
+            id SERIAL PRIMARY KEY,
+            model_id INTEGER NOT NULL,
+            version INTEGER NOT NULL,
+            changes TEXT,
+            operator TEXT,
+            created_at TEXT
         )
     ''')
     
@@ -1284,6 +1299,264 @@ def stream_response(conn, user, model_cfg, body):
         conn.close()
         logger.error(f"Stream error: {str(e)}")
         return {"error": {"message": f"Stream error: {str(e)[:100]}"}}, 500, {'Access-Control-Allow-Origin': '*'}
+
+@app.route('/admin')
+@login_required
+def admin_page():
+    user = get_user()
+    if not user or not user.get('is_admin'):
+        abort(403)
+    
+    conn = get_db()
+    if USE_POSTGRES:
+        models = fetch_all(conn, "SELECT * FROM models ORDER BY sort ASC")
+    else:
+        models = fetch_all(conn, "SELECT * FROM models ORDER BY sort ASC")
+    conn.close()
+    
+    return render_template('admin_models.html',
+                           page_title='模型管理',
+                           user=user,
+                           menu_items=MENU_ITEMS,
+                           active_menu='admin',
+                           models=models)
+
+@app.route('/admin/models/list')
+@login_required
+def admin_models_list():
+    user = get_user()
+    if not user or not user.get('is_admin'):
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    conn = get_db()
+    if USE_POSTGRES:
+        models = fetch_all(conn, "SELECT id, name, display_name, status FROM models ORDER BY sort ASC")
+    else:
+        models = fetch_all(conn, "SELECT id, name, display_name, status FROM models ORDER BY sort ASC")
+    conn.close()
+    
+    return jsonify(models)
+
+@app.route('/admin/model/<int:model_id>')
+@login_required
+def admin_get_model(model_id):
+    user = get_user()
+    if not user or not user.get('is_admin'):
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    conn = get_db()
+    if USE_POSTGRES:
+        model = fetch_one(conn, "SELECT * FROM models WHERE id = %s", (model_id,))
+    else:
+        model = fetch_one(conn, "SELECT * FROM models WHERE id = ?", (model_id,))
+    conn.close()
+    
+    if not model:
+        return jsonify({"error": "Model not found"}), 404
+    
+    return jsonify(model)
+
+@app.route('/admin/model/<int:model_id>/history')
+@login_required
+def admin_model_history(model_id):
+    user = get_user()
+    if not user or not user.get('is_admin'):
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    conn = get_db()
+    if USE_POSTGRES:
+        history = fetch_all(conn, "SELECT * FROM model_history WHERE model_id = %s ORDER BY version DESC LIMIT 20", (model_id,))
+    else:
+        history = fetch_all(conn, "SELECT * FROM model_history WHERE model_id = ? ORDER BY version DESC LIMIT 20", (model_id,))
+    conn.close()
+    
+    return jsonify(history)
+
+@app.route('/admin/model/save', methods=['POST'])
+@login_required
+def admin_save_model():
+    user = get_user()
+    if not user or not user.get('is_admin'):
+        return jsonify({"success": False, "message": "Unauthorized"}), 403
+    
+    model_id = request.form.get('id', '').strip()
+    name = request.form.get('name', '').strip()
+    display_name = request.form.get('display_name', '').strip()
+    provider = request.form.get('provider', 'openai')
+    base_url = request.form.get('base_url', '').strip()
+    api_key = request.form.get('api_key', '').strip()
+    input_price = request.form.get('input_price', '')
+    output_price = request.form.get('output_price', '')
+    sort = request.form.get('sort', '10')
+    status = request.form.get('status', '1')
+    remark = request.form.get('remark', '').strip()
+    
+    if not name or not base_url or not input_price or not output_price:
+        return jsonify({"success": False, "message": "请填写必填字段"}), 400
+    
+    try:
+        input_price = float(input_price)
+        output_price = float(output_price)
+        sort = int(sort)
+        status = int(status)
+    except ValueError:
+        return jsonify({"success": False, "message": "参数格式错误"}), 400
+    
+    conn = get_db()
+    
+    try:
+        if model_id:
+            if USE_POSTGRES:
+                old_model = fetch_one(conn, "SELECT * FROM models WHERE id = %s", (model_id,))
+            else:
+                old_model = fetch_one(conn, "SELECT * FROM models WHERE id = ?", (model_id,))
+            
+            changes = []
+            if old_model:
+                if old_model['name'] != name:
+                    changes.append(f"名称: {old_model['name']} -> {name}")
+                if old_model['display_name'] != display_name:
+                    changes.append(f"显示名称: {old_model['display_name']} -> {display_name}")
+                if old_model['provider'] != provider:
+                    changes.append(f"厂商: {old_model['provider']} -> {provider}")
+                if old_model['base_url'] != base_url:
+                    changes.append(f"API地址: {old_model['base_url']} -> {base_url}")
+                if old_model['input_price'] != input_price:
+                    changes.append(f"输入价格: {old_model['input_price']} -> {input_price}")
+                if old_model['output_price'] != output_price:
+                    changes.append(f"输出价格: {old_model['output_price']} -> {output_price}")
+                if old_model['sort'] != sort:
+                    changes.append(f"排序: {old_model['sort']} -> {sort}")
+                if old_model['status'] != status:
+                    changes.append(f"状态: {'启用' if old_model['status'] == 1 else '禁用'} -> {'启用' if status == 1 else '禁用'}")
+            
+            new_version = old_model['version'] + 1 if old_model else 1
+            
+            if USE_POSTGRES:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE models SET name = %s, display_name = %s, provider = %s, base_url = %s, api_key = %s, input_price = %s, output_price = %s, sort = %s, status = %s, remark = %s, version = %s WHERE id = %s",
+                              (name, display_name, provider, base_url, api_key, input_price, output_price, sort, status, remark, new_version, model_id))
+                
+                if changes:
+                    cursor.execute("INSERT INTO model_history (model_id, version, changes, operator) VALUES (%s, %s, %s, %s)",
+                                  (model_id, new_version, ', '.join(changes), user['username']))
+                cursor.close()
+            else:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE models SET name = ?, display_name = ?, provider = ?, base_url = ?, api_key = ?, input_price = ?, output_price = ?, sort = ?, status = ?, remark = ?, version = ? WHERE id = ?",
+                              (name, display_name, provider, base_url, api_key, input_price, output_price, sort, status, remark, new_version, model_id))
+                
+                if changes:
+                    cursor.execute("INSERT INTO model_history (model_id, version, changes, operator) VALUES (?, ?, ?, ?)",
+                                  (model_id, new_version, ', '.join(changes), user['username']))
+                cursor.close()
+            
+            conn.commit()
+            message = "更新成功"
+        else:
+            if USE_POSTGRES:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO models (name, display_name, provider, base_url, api_key, input_price, output_price, sort, status, remark, version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1) RETURNING id",
+                              (name, display_name, provider, base_url, api_key, input_price, output_price, sort, status, remark))
+                model_id = cursor.fetchone()[0]
+                cursor.execute("INSERT INTO model_history (model_id, version, changes, operator) VALUES (%s, %s, %s, %s)",
+                              (model_id, 1, '创建模型', user['username']))
+                cursor.close()
+            else:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO models (name, display_name, provider, base_url, api_key, input_price, output_price, sort, status, remark, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                              (name, display_name, provider, base_url, api_key, input_price, output_price, sort, status, remark))
+                model_id = cursor.lastrowid
+                cursor.execute("INSERT INTO model_history (model_id, version, changes, operator) VALUES (?, ?, ?, ?)",
+                              (model_id, 1, '创建模型', user['username']))
+                cursor.close()
+            
+            conn.commit()
+            message = "创建成功"
+        
+        conn.close()
+        return jsonify({"success": True, "message": message, "model_id": model_id})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error(f"Save model error: {str(e)}")
+        return jsonify({"success": False, "message": "保存失败: " + str(e)[:50]}), 500
+
+@app.route('/admin/model/<int:model_id>/delete', methods=['POST'])
+@login_required
+def admin_delete_model(model_id):
+    user = get_user()
+    if not user or not user.get('is_admin'):
+        return jsonify({"success": False, "message": "Unauthorized"}), 403
+    
+    conn = get_db()
+    
+    try:
+        if USE_POSTGRES:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM model_history WHERE model_id = %s", (model_id,))
+            cursor.execute("DELETE FROM models WHERE id = %s", (model_id,))
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM model_history WHERE model_id = ?", (model_id,))
+            cursor.execute("DELETE FROM models WHERE id = ?", (model_id,))
+            cursor.close()
+        
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "message": "删除成功"})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error(f"Delete model error: {str(e)}")
+        return jsonify({"success": False, "message": "删除失败: " + str(e)[:50]}), 500
+
+@app.route('/admin/model/<int:model_id>/rollback/<int:version>', methods=['POST'])
+@login_required
+def admin_rollback_model(model_id, version):
+    user = get_user()
+    if not user or not user.get('is_admin'):
+        return jsonify({"success": False, "message": "Unauthorized"}), 403
+    
+    conn = get_db()
+    
+    try:
+        if USE_POSTGRES:
+            history = fetch_all(conn, "SELECT * FROM model_history WHERE model_id = %s ORDER BY version ASC", (model_id,))
+        else:
+            history = fetch_all(conn, "SELECT * FROM model_history WHERE model_id = ? ORDER BY version ASC", (model_id,))
+        
+        if version < 1 or version > len(history):
+            conn.close()
+            return jsonify({"success": False, "message": "无效的版本号"}), 400
+        
+        current_version = history[-1]['version'] if history else 1
+        
+        if USE_POSTGRES:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE models SET version = %s WHERE id = %s", (current_version + 1, model_id))
+            cursor.execute("INSERT INTO model_history (model_id, version, changes, operator) VALUES (%s, %s, %s, %s)",
+                          (model_id, current_version + 1, f'回滚到版本 {version}', user['username']))
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE models SET version = ? WHERE id = ?", (current_version + 1, model_id))
+            cursor.execute("INSERT INTO model_history (model_id, version, changes, operator) VALUES (?, ?, ?, ?)",
+                          (model_id, current_version + 1, f'回滚到版本 {version}', user['username']))
+            cursor.close()
+        
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "message": "恢复成功"})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error(f"Rollback model error: {str(e)}")
+        return jsonify({"success": False, "message": "恢复失败: " + str(e)[:50]}), 500
 
 @app.errorhandler(403)
 def forbidden(e):
