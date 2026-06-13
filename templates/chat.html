@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}AI 对话 - AI 中转平台{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="card">
+        <div class="model-selector">
+            <label>选择模型：</label>
+            <select id="modelSelect" onchange="changeModel()">
+                {% for m in models %}
+                <option value="{{ m.name }}" {% if m.name == selected_model %}selected{% endif %}>{{ m.display_name or m.name }}</option>
+                {% endfor %}
+            </select>
+            <span style="margin-left:auto;color:#8c8c8c;font-size:12px">
+                API Key: <code id="apiKeyDisplay">{{ api_key[:10] }}...</code>
+                <button class="btn btn-default" style="padding:2px 8px;margin-left:5px" onclick="copyApiKey()">复制</button>
+            </span>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+            <div style="text-align:center;color:#8c8c8c;padding:50px 20px">
+                <div style="font-size:48px;margin-bottom:15px">💬</div>
+                <p>选择模型开始对话</p>
+                <p style="font-size:12px;margin-top:10px">支持多轮对话，自动维护上下文</p>
+            </div>
+        </div>
+        
+        <div id="typingIndicator" class="typing-indicator">
+            <span>AI 正在思考中...</span>
+        </div>
+        
+        <div class="chat-input-area">
+            <textarea id="userInput" placeholder="输入消息，按 Enter 发送，Shift+Enter 换行" onkeydown="handleKeydown(event)"></textarea>
+            <button class="btn btn-primary" style="width:100px" onclick="sendMessage()">发送</button>
+        </div>
+        
+        <div style="display:flex;justify-content:space-between;margin-top:10px">
+            <button class="btn btn-default" onclick="clearChat()">清空对话</button>
+            <span style="color:#8c8c8c;font-size:12px">余额：¥{{ (user.balance|round(2)) if user else 0 }}</span>
+        </div>
+    </div>
+    
+    <div class="card" style="margin-top:15px">
+        <h3 style="font-size:14px;margin-bottom:10px">对话历史</h3>
+        <div id="historyList" style="max-height:200px;overflow-y:auto">
+            <p style="color:#8c8c8c;font-size:12px">暂无历史记录</p>
+        </div>
+    </div>
+</div>
+
+<script>
+var messages = [];
+var isLoading = false;
+var apiKey = '{{ api_key }}';
+
+function changeModel() {
+    var model = document.getElementById('modelSelect').value;
+    var url = new URL(window.location);
+    url.searchParams.set('model', model);
+    window.history.pushState({}, '', url);
+}
+
+function handleKeydown(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+    }
+}
+
+function sendMessage() {
+    if (isLoading) return;
+    
+    var input = document.getElementById('userInput');
+    var content = input.value.trim();
+    
+    if (!content) return;
+    
+    var model = document.getElementById('modelSelect').value;
+    
+    // 添加用户消息
+    messages.push({ role: 'user', content: content });
+    addMessage('user', content);
+    
+    input.value = '';
+    isLoading = true;
+    document.getElementById('typingIndicator').style.display = 'block';
+    
+    // 发送请求
+    fetch('/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + apiKey
+        },
+        body: JSON.stringify({
+            model: model,
+            messages: messages,
+            stream: true
+        })
+    }).then(function(response) {
+        if (!response.ok) {
+            throw new Error('请求失败: ' + response.status);
+        }
+        
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var assistantContent = '';
+        var messageDiv = addMessage('assistant', '');
+        
+        function readStream() {
+            reader.read().then(function(result) {
+                if (result.done) {
+                    isLoading = false;
+                    document.getElementById('typingIndicator').style.display = 'none';
+                    messages.push({ role: 'assistant', content: assistantContent });
+                    return;
+                }
+                
+                var chunk = decoder.decode(result.value, { stream: true });
+                var lines = chunk.split('\n');
+                
+                lines.forEach(function(line) {
+                    if (line.startsWith('data: ')) {
+                        var data = line.slice(6).trim();
+                        if (data === '[DONE]') return;
+                        
+                        try {
+                            var json = JSON.parse(data);
+                            if (json.choices && json.choices[0].delta && json.choices[0].delta.content) {
+                                assistantContent += json.choices[0].delta.content;
+                                messageDiv.innerHTML = formatContent(assistantContent);
+                                scrollToBottom();
+                            }
+                        } catch (e) {
+                            // 忽略解析错误
+                        }
+                    }
+                });
+                
+                readStream();
+            });
+        }
+        
+        readStream();
+    }).catch(function(error) {
+        isLoading = false;
+        document.getElementById('typingIndicator').style.display = 'none';
+        addMessage('assistant', '错误: ' + error.message);
+    });
+}
+
+function addMessage(role, content) {
+    var container = document.getElementById('chatMessages');
+    
+    // 清除欢迎信息
+    if (container.querySelector('div[style*="text-align:center"]')) {
+        container.innerHTML = '';
+    }
+    
+    var div = document.createElement('div');
+    div.className = 'chat-message ' + role;
+    div.innerHTML = formatContent(content);
+    container.appendChild(div);
+    scrollToBottom();
+    
+    return div;
+}
+
+function formatContent(content) {
+    // 简单的格式化：换行符转 <br>
+    return content.replace(/\n/g, '<br>');
+}
+
+function scrollToBottom() {
+    var container = document.getElementById('chatMessages');
+    container.scrollTop = container.scrollHeight;
+}
+
+function clearChat() {
+    if (confirm('确定要清空对话吗？')) {
+        messages = [];
+        document.getElementById('chatMessages').innerHTML = `
+            <div style="text-align:center;color:#8c8c8c;padding:50px 20px">
+                <div style="font-size:48px;margin-bottom:15px">💬</div>
+                <p>选择模型开始对话</p>
+                <p style="font-size:12px;margin-top:10px">支持多轮对话，自动维护上下文</p>
+            </div>
+        `;
+    }
+}
+
+function copyApiKey() {
+    navigator.clipboard.writeText(apiKey).then(function() {
+        alert('API Key 已复制到剪贴板');
+    }).catch(function() {
+        var input = document.createElement('input');
+        input.value = apiKey;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        alert('API Key 已复制到剪贴板');
+    });
+}
+
+// 页面加载时聚焦输入框
+document.getElementById('userInput').focus();
+</script>
+{% endblock %}

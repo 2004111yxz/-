@@ -8,20 +8,146 @@
     {% if msg %}
     <p class="{{ msg_type }}">{{ msg }}</p>
     {% endif %}
-    <form method="post">
+    <form method="post" id="passwordForm">
         <div class="form-row">
             <label style="width:100px">原密码：</label>
             <input name="old_password" type="password" placeholder="请输入原密码" style="flex:1" required>
         </div>
-        <div class="form-row">
-            <label style="width:100px">新密码：</label>
-            <input name="new_password" type="password" placeholder="请输入新密码" style="flex:1" required>
+        <div class="form-row" style="flex-direction:column;align-items:flex-start">
+            <div style="display:flex;width:100%;align-items:center">
+                <label style="width:100px">新密码：</label>
+                <input id="new_password" name="new_password" type="password" placeholder="请输入新密码" style="flex:1" required oninput="checkPassword()">
+            </div>
+            <div style="margin-left:100px;width:calc(100% - 100px)">
+                <div class="strength-bar"><div id="strengthBar"></div></div>
+                <div style="display:flex;justify-content:space-between;margin-top:4px">
+                    <span id="strengthLabel" class="strength-label"></span>
+                    <span id="strengthHint" class="password-hint"></span>
+                </div>
+            </div>
         </div>
         <div class="form-row">
             <label style="width:100px">确认密码：</label>
-            <input name="confirm_password" type="password" placeholder="请确认新密码" style="flex:1" required>
+            <input id="confirm_password" name="confirm_password" type="password" placeholder="请确认新密码" style="flex:1" required oninput="checkMatch()">
         </div>
-        <button class="btn btn-primary" type="submit">保存修改</button>
+        <div id="matchHint" class="password-hint" style="margin-left:100px"></div>
+        <button class="btn btn-primary" type="submit" id="submitBtn">保存修改</button>
     </form>
 </div>
+
+<div class="card" style="max-width:500px;margin-top:20px">
+    <h3>账户信息</h3>
+    <div class="form-row">
+        <label style="width:100px">用户名：</label>
+        <span>{{ user.username if user else '' }}</span>
+    </div>
+    <div class="form-row">
+        <label style="width:100px">账户余额：</label>
+        <span style="color:#52c41a;font-weight:bold">¥ {{ (user.balance|round(2)) if user else 0 }}</span>
+    </div>
+    <div class="form-row">
+        <label style="width:100px">注册时间：</label>
+        <span>{{ user.created_at if user else '' }}</span>
+    </div>
+</div>
+
+<script>
+function checkPassword() {
+    var pwd = document.getElementById('new_password').value;
+    var bar = document.getElementById('strengthBar');
+    var label = document.getElementById('strengthLabel');
+    var hint = document.getElementById('strengthHint');
+    
+    var strength = 0;
+    var hints = [];
+    
+    if (pwd.length >= 8) strength++;
+    else if (pwd.length > 0) hints.push('长度不足8位');
+    
+    if (pwd.length >= 12) strength++;
+    if (/[a-z]/.test(pwd)) strength++;
+    else if (pwd.length > 0 && !/[a-z]/.test(pwd)) hints.push('缺小写字母');
+    
+    if (/[A-Z]/.test(pwd)) strength++;
+    else if (pwd.length > 0 && !/[A-Z]/.test(pwd)) hints.push('缺大写字母');
+    
+    if (/[0-9]/.test(pwd)) strength++;
+    else if (pwd.length > 0 && !/[0-9]/.test(pwd)) hints.push('缺数字');
+    
+    if (/[!@#$%^&*(),.?":{}|<>]/.test(pwd)) strength++;
+    else if (pwd.length > 0 && !/[!@#$%^&*(),.?":{}|<>]/.test(pwd)) hints.push('缺特殊字符');
+    
+    if (strength <= 2) {
+        bar.className = 'strength-weak';
+        label.textContent = '弱';
+        label.style.color = '#ff4d4f';
+    } else if (strength <= 3) {
+        bar.className = 'strength-medium';
+        label.textContent = '中';
+        label.style.color = '#faad14';
+    } else if (strength <= 4) {
+        bar.className = 'strength-strong';
+        label.textContent = '强';
+        label.style.color = '#52c41a';
+    } else {
+        bar.className = 'strength-very-strong';
+        label.textContent = '非常强';
+        label.style.color = '#1890ff';
+    }
+    
+    if (pwd.length === 0) {
+        bar.className = '';
+        bar.style.width = '0';
+        label.textContent = '';
+        hint.textContent = '密码要求：长度≥8位，包含大小写字母、数字、特殊字符中至少3类';
+    } else {
+        bar.style.width = '';
+        hint.textContent = hints.length > 0 ? '建议：' + hints.join('、') : '';
+    }
+    
+    checkMatch();
+}
+
+function checkMatch() {
+    var pwd = document.getElementById('new_password').value;
+    var confirm = document.getElementById('confirm_password').value;
+    var hint = document.getElementById('matchHint');
+    
+    if (confirm.length === 0) {
+        hint.textContent = '';
+        hint.style.color = '';
+    } else if (pwd === confirm) {
+        hint.textContent = '✓ 密码一致';
+        hint.style.color = '#52c41a';
+    } else {
+        hint.textContent = '✗ 密码不一致';
+        hint.style.color = '#ff4d4f';
+    }
+}
+
+document.getElementById('passwordForm').addEventListener('submit', function(e) {
+    var pwd = document.getElementById('new_password').value;
+    var confirm = document.getElementById('confirm_password').value;
+    
+    if (pwd !== confirm) {
+        e.preventDefault();
+        alert('两次输入的密码不一致！');
+        return false;
+    }
+    
+    // 检查密码强度
+    var strength = 0;
+    if (pwd.length >= 8) strength++;
+    if (/[a-z]/.test(pwd)) strength++;
+    if (/[A-Z]/.test(pwd)) strength++;
+    if (/[0-9]/.test(pwd)) strength++;
+    if (/[!@#$%^&*(),.?":{}|<>]/.test(pwd)) strength++;
+    
+    if (strength < 3) {
+        e.preventDefault();
+        alert('密码强度不足！请确保密码包含大小写字母、数字、特殊字符中至少3类');
+        return false;
+    }
+});
+</script>
 {% endblock %}

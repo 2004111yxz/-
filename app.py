@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 MENU_ITEMS = [
     ("dashboard", "📊 仪表盘", "/dashboard"),
+    ("chat", "💬 AI 对话", "/chat"),
     ("keys", "🔑 API 密钥", "/keys"),
     ("logs", "📋 调用记录", "/logs"),
     ("models", "🤖 模型列表", "/models"),
@@ -607,7 +608,32 @@ def models_page():
                            user=user, 
                            menu_items=MENU_ITEMS, 
                            active_menu='models',
-                           models=models)
+                           models=models,
+                           host_url=request.host_url)
+
+@app.route('/chat')
+@login_required
+def chat_page():
+    user = get_user()
+    conn = get_db()
+    if USE_POSTGRES:
+        models = fetch_all(conn, "SELECT * FROM models WHERE status = 1 ORDER BY sort ASC")
+        api_key = fetch_one(conn, "SELECT * FROM api_keys WHERE user_id = %s AND status = 1 ORDER BY id DESC LIMIT 1", (session['user_id'],))
+    else:
+        models = fetch_all(conn, "SELECT * FROM models WHERE status = 1 ORDER BY sort ASC")
+        api_key = fetch_one(conn, "SELECT * FROM api_keys WHERE user_id = ? AND status = 1 ORDER BY id DESC LIMIT 1", (session['user_id'],))
+    conn.close()
+    
+    selected_model = request.args.get('model', models[0]['name'] if models else 'gpt-3.5-turbo')
+    
+    return render_template('chat.html', 
+                           page_title='AI 对话', 
+                           user=user, 
+                           menu_items=MENU_ITEMS, 
+                           active_menu='chat',
+                           models=models,
+                           selected_model=selected_model,
+                           api_key=api_key['key'] if api_key else '')
 
 @app.route('/recharge', methods=['GET','POST'])
 @login_required

@@ -5,17 +5,94 @@
 {% block content %}
 <div class="card">
     <h3>支持的模型列表</h3>
-    <table>
-        <tr><th>模型名称</th><th>模型ID</th><th>输入单价/千Token</th><th>输出单价/千Token</th><th>状态</th></tr>
+    <p style="color:#8c8c8c;margin-bottom:15px">选择模型开始对话，或查看模型详情</p>
+    
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:15px">
         {% for m in models %}
-        <tr>
-            <td>{{ m.display_name or m.name }}</td>
-            <td><code>{{ m.name }}</code></td>
-            <td>¥ {{ m.input_price|round(4) }}</td>
-            <td>¥ {{ m.output_price|round(4) }}</td>
-            <td><span class="tag tag-green">在线</span></td>
-        </tr>
+        <div class="model-card" data-model="{{ m.name }}" onclick="selectModel('{{ m.name }}')">
+            <div class="model-header">
+                <span class="model-name">{{ m.display_name or m.name }}</span>
+                <span class="tag tag-green">在线</span>
+            </div>
+            <div class="model-price">
+                输入：¥{{ m.input_price|round(4) }}/千Token | 输出：¥{{ m.output_price|round(4) }}/千Token
+            </div>
+            <div style="margin-top:10px">
+                <code style="font-size:11px;background:#f5f5f5;padding:2px 6px;border-radius:4px">{{ m.name }}</code>
+            </div>
+            <div style="margin-top:10px;display:flex;gap:10px">
+                <button class="btn btn-primary" style="flex:1" onclick="event.stopPropagation();startChat('{{ m.name }}')">开始对话</button>
+                <button class="btn btn-default" onclick="event.stopPropagation();copyModelId('{{ m.name }}')">复制ID</button>
+            </div>
+        </div>
         {% endfor %}
-    </table>
+    </div>
 </div>
+
+<div class="card" style="margin-top:20px">
+    <h3>使用说明</h3>
+    <div style="line-height:2;color:#595959">
+        <p><strong>1. API 调用方式</strong></p>
+        <p style="margin-left:20px">接口地址：<code>{{ host_url }}v1</code></p>
+        <p style="margin-left:20px">兼容 OpenAI 格式，支持所有主流客户端</p>
+        
+        <p style="margin-top:15px"><strong>2. 请求示例</strong></p>
+        <pre style="background:#f5f5f5;padding:15px;border-radius:8px;overflow-x:auto;font-size:12px">curl {{ host_url }}v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-chat",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'</pre>
+        
+        <p style="margin-top:15px"><strong>3. 支持的参数</strong></p>
+        <table style="margin-top:10px">
+            <tr><th>参数</th><th>类型</th><th>说明</th></tr>
+            <tr><td><code>model</code></td><td>string</td><td>模型ID，从上方列表选择</td></tr>
+            <tr><td><code>messages</code></td><td>array</td><td>对话消息数组</td></tr>
+            <tr><td><code>stream</code></td><td>boolean</td><td>是否流式输出</td></tr>
+            <tr><td><code>temperature</code></td><td>number</td><td>温度参数，0-2</td></tr>
+            <tr><td><code>max_tokens</code></td><td>integer</td><td>最大输出Token数</td></tr>
+        </table>
+    </div>
+</div>
+
+<script>
+var selectedModel = null;
+
+function selectModel(modelName) {
+    // 移除之前的选中状态
+    document.querySelectorAll('.model-card').forEach(function(card) {
+        card.classList.remove('selected');
+    });
+    
+    // 添加选中状态
+    var card = document.querySelector('.model-card[data-model="' + modelName + '"]');
+    if (card) {
+        card.classList.add('selected');
+        selectedModel = modelName;
+    }
+}
+
+function startChat(modelName) {
+    // 跳转到聊天页面
+    window.location.href = '/chat?model=' + encodeURIComponent(modelName);
+}
+
+function copyModelId(modelName) {
+    navigator.clipboard.writeText(modelName).then(function() {
+        alert('已复制模型ID: ' + modelName);
+    }).catch(function() {
+        // 降级方案
+        var input = document.createElement('input');
+        input.value = modelName;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        alert('已复制模型ID: ' + modelName);
+    });
+}
+</script>
 {% endblock %}

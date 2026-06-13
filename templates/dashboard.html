@@ -22,13 +22,66 @@
     </div>
 </div>
 
-<div class="card">
+<div class="quick-actions">
+    <a href="/chat" class="quick-action">
+        <div class="icon">💬</div>
+        <div class="title">开始对话</div>
+        <div class="desc">在线体验 AI 对话</div>
+    </a>
+    <a href="/models" class="quick-action">
+        <div class="icon">🤖</div>
+        <div class="title">模型列表</div>
+        <div class="desc">查看支持的模型</div>
+    </a>
+    <a href="/keys" class="quick-action">
+        <div class="icon">🔑</div>
+        <div class="title">API 密钥</div>
+        <div class="desc">管理您的密钥</div>
+    </a>
+    <a href="/logs" class="quick-action">
+        <div class="icon">📋</div>
+        <div class="title">调用记录</div>
+        <div class="desc">查看使用历史</div>
+    </a>
+    <a href="/recharge" class="quick-action">
+        <div class="icon">💳</div>
+        <div class="title">卡密充值</div>
+        <div class="desc">为账户充值</div>
+    </a>
+    <a href="/profile" class="quick-action">
+        <div class="icon">👤</div>
+        <div class="title">个人设置</div>
+        <div class="desc">修改密码</div>
+    </a>
+</div>
+
+<div class="card" style="margin-top:20px">
     <h3>快速开始</h3>
-    <p style="color:#595959;line-height:2">
-        1. 前往「API 密钥」获取你的专属密钥<br>
-        2. 接口地址：<code>{{ host_url }}v1</code><br>
-        3. 兼容 OpenAI 格式，所有支持自定义接口的客户端均可使用<br>
-        4. 调用实时扣费，余额不足请使用卡密充值
-    </p>
+    <div style="line-height:2.2;color:#595959">
+        <p><strong>1. 获取 API 密钥</strong></p>
+        <p style="margin-left:20px">前往「<a href="/keys">API 密钥</a>」页面获取您的专属密钥</p>
+        
+        <p style="margin-top:15px"><strong>2. 调用接口</strong></p>
+        <p style="margin-left:20px">接口地址：<code>{{ host_url }}v1</code></p>
+        <p style="margin-left:20px">兼容 OpenAI 格式，所有支持自定义接口的客户端均可使用</p>
+        
+        <p style="margin-top:15px"><strong>3. 在线体验</strong></p>
+        <p style="margin-left:20px">点击上方「开始对话」直接在网页中体验 AI 对话</p>
+        
+        <p style="margin-top:15px"><strong>4. 费用说明</strong></p>
+        <p style="margin-left:20px">调用实时扣费，余额不足请使用卡密充值</p>
+    </div>
+</div>
+
+<div class="card" style="margin-top:20px">
+    <h3>API 调用示例</h3>
+    <pre style="background:#1e1e1e;color:#d4d4d4;padding:15px;border-radius:8px;overflow-x:auto;font-size:12px">curl {{ host_url }}v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-chat",
+    "messages": [{"role": "user", "content": "你好"}],
+    "stream": true
+  }'</pre>
 </div>
 {% endblock %}
