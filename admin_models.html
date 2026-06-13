@@ -735,6 +735,12 @@ function submitForm(event) {
     event.preventDefault();
     showConfirmModal();
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    hideConfirmModal();
+    hideDeleteModal();
+    createNewModel();
+});
 </script>
 
 <style>
