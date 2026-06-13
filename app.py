@@ -1212,7 +1212,7 @@ def stream_response(conn, user, model_cfg, body):
                             # 累积完整内容用于计费
                             if 'choices' in data and len(data['choices']) > 0:
                                 delta = data['choices'][0].get('delta', {})
-                                if 'content' in delta:
+                                if 'content' in delta and delta['content'] is not None:
                                     full_content += delta['content']
                             
                             # 转发数据
