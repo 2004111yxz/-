@@ -194,14 +194,22 @@ def init_db():
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO models (name, display_name, base_url, api_key, input_price, output_price, status) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                ("gpt-3.5-turbo", "GPT-3.5-Turbo", "https://openai.api2d.net/v1", "fk-替换为你的密钥", 0.005, 0.015, 1)
+                ("gpt-3.5-turbo", "GPT-3.5-Turbo", "https://api.openai.com/v1", "sk-替换为你的OpenAI密钥", 0.0015, 0.002, 1)
+            )
+            cursor.execute(
+                "INSERT INTO models (name, display_name, base_url, api_key, input_price, output_price, status) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                ("deepseek-chat", "DeepSeek Chat", "https://api.deepseek.com/v1", "sk-替换为你的DeepSeek密钥", 0.0005, 0.0015, 1)
             )
             cursor.close()
         else:
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO models (name, display_name, base_url, api_key, input_price, output_price, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("gpt-3.5-turbo", "GPT-3.5-Turbo", "https://openai.api2d.net/v1", "fk-替换为你的密钥", 0.005, 0.015, 1)
+                ("gpt-3.5-turbo", "GPT-3.5-Turbo", "https://api.openai.com/v1", "sk-替换为你的OpenAI密钥", 0.0015, 0.002, 1)
+            )
+            cursor.execute(
+                "INSERT INTO models (name, display_name, base_url, api_key, input_price, output_price, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("deepseek-chat", "DeepSeek Chat", "https://api.deepseek.com/v1", "sk-替换为你的DeepSeek密钥", 0.0005, 0.0015, 1)
             )
             cursor.close()
         conn.commit()
