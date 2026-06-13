@@ -30,13 +30,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 MENU_ITEMS = [
-    ("dashboard", "📊 仪表盘", "/dashboard"),
-    ("chat", "💬 AI 对话", "/chat"),
-    ("keys", "🔑 API 密钥", "/keys"),
-    ("logs", "📋 调用记录", "/logs"),
-    ("models", "🤖 模型列表", "/models"),
-    ("recharge", "💳 卡密充值", "/recharge"),
-    ("profile", "👤 个人设置", "/profile"),
+    ("dashboard", "首页", "/dashboard"),
+    ("chat", "控制台", "/chat"),
+    ("models", "模型", "/models"),
 ]
 
 def hash_password(password):
