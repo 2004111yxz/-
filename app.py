@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, render_template_string, session, redirect, url_for, abort
+from flask import Flask, request, render_template, render_template_string, session, redirect, url_for, abort, Response
 import hashlib
 import uuid
 import requests
@@ -1029,6 +1029,17 @@ def chat_completions():
         conn.close()
         return {"error": {"message": "Insufficient balance, please recharge"}}, 402, {'Access-Control-Allow-Origin': '*'}
     
+    # 检查是否需要流式输出
+    is_streaming = body.get('stream', False)
+    print(f"[DEBUG] Stream check - is_streaming: {is_streaming}, body keys: {list(body.keys())}", flush=True)
+    logger.info(f"Stream check - is_streaming: {is_streaming}, body keys: {list(body.keys())}")
+    
+    # 流式响应处理
+    if is_streaming:
+        print("[DEBUG] Entering stream_response function", flush=True)
+        logger.info("Entering stream_response function")
+        return stream_response(conn, user, model_cfg, body)
+    
     try:
         resp = requests.post(
             f"{model_cfg['base_url']}/chat/completions",
@@ -1067,10 +1078,10 @@ def chat_completions():
         else:
             try:
                 result = resp.json()
-            except ValueError:
+            except (ValueError, json.JSONDecodeError, Exception) as e:
+                logger.error(f"JSON Decode Error: {type(e).__name__}: {str(e)}, Response text: {resp.text[:500]}")
                 conn.close()
-                logger.error(f"Invalid JSON response: {resp.text[:200]}")
-                return {"error": {"message": f"Invalid response from upstream: {resp.text[:100]}"}}, 503, {'Access-Control-Allow-Origin': '*'}
+                return {"error": {"message": f"JSON parse error: {str(e)[:100]}"}}, 503, {'Access-Control-Allow-Origin': '*'}
         
         if 'usage' in result:
             prompt_tokens = result['usage'].get('prompt_tokens', 0)
@@ -1113,6 +1124,141 @@ def chat_completions():
         logger.error(f"Unexpected error: {str(e)}")
         return {"error": {"message": f"Server error: {str(e)[:100]}"}}, 500, {'Access-Control-Allow-Origin': '*'}
 
+
+def stream_response(conn, user, model_cfg, body):
+    """处理流式响应"""
+    user_id = user['id']
+    model_name = body.get('model', 'gpt-3.5-turbo')
+    
+    try:
+        # 发送流式请求到上游
+        resp = requests.post(
+            f"{model_cfg['base_url']}/chat/completions",
+            json={**body, 'stream': True},
+            headers={
+                'Authorization': f"Bearer {model_cfg['api_key']}",
+                'Content-Type': 'application/json'
+            },
+            stream=True,
+            timeout=120
+        )
+        
+        # 如果上游返回非200状态码，记录错误
+        if resp.status_code != 200:
+            error_text = resp.text[:200] if resp.text else "Empty error response"
+            logger.error(f"Upstream streaming error: {resp.status_code} - {error_text}")
+            conn.close()
+            return {"error": {"message": f"Upstream error {resp.status_code}: {error_text}"}}, resp.status_code, {'Access-Control-Allow-Origin': '*'}
+        
+        prompt_tokens = 0
+        completion_tokens = 0
+        full_content = ""
+        
+        def generate():
+            nonlocal prompt_tokens, completion_tokens, full_content
+            
+            try:
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    
+                    line_text = line.decode('utf-8', errors='ignore').strip()
+                    
+                    if not line_text:
+                        continue
+                    
+                    if line_text.startswith('data: '):
+                        data_str = line_text[6:].strip()
+                        
+                        if data_str == '[DONE]':
+                            yield 'data: [DONE]\n\n'
+                            break
+                        
+                        try:
+                            import json
+                            data = json.loads(data_str)
+                            
+                            # 提取 token 计数
+                            if 'usage' in data:
+                                prompt_tokens = data['usage'].get('prompt_tokens', 0)
+                                completion_tokens = data['usage'].get('completion_tokens', 0)
+                            
+                            # 累积完整内容用于计费
+                            if 'choices' in data and len(data['choices']) > 0:
+                                delta = data['choices'][0].get('delta', {})
+                                if 'content' in delta:
+                                    full_content += delta['content']
+                            
+                            # 转发数据
+                            yield f'{line_text}\n\n'
+                            
+                        except json.JSONDecodeError:
+                            continue
+                    elif line_text:
+                        # 其他响应行直接转发
+                        yield f'{line_text}\n\n'
+                
+                # 流结束后计算并扣除费用
+                if not completion_tokens:
+                    completion_tokens = max(len(full_content) // 4, 1)  # 至少1个token
+                
+            except Exception as e:
+                logger.error(f"Error in streaming generator: {str(e)}")
+        
+        # 异步更新费用和日志 - 在新线程中创建新的数据库连接
+        import threading
+        def update_cost():
+            try:
+                # 为后台线程创建新的数据库连接
+                thread_conn = get_db()
+                
+                cost = (prompt_tokens / 1000) * model_cfg['input_price'] + (completion_tokens / 1000) * model_cfg['output_price']
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                if USE_POSTGRES:
+                    cursor = thread_conn.cursor()
+                    cursor.execute("UPDATE users SET balance = balance - %s WHERE id = %s", (cost, user_id))
+                    cursor.execute("INSERT INTO logs (user_id, model, prompt_tokens, completion_tokens, cost, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                                  (user_id, model_name, prompt_tokens, completion_tokens, cost, now))
+                    cursor.close()
+                else:
+                    cursor = thread_conn.cursor()
+                    cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (cost, user_id))
+                    cursor.execute("INSERT INTO logs (user_id, model, prompt_tokens, completion_tokens, cost, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                                  (user_id, model_name, prompt_tokens, completion_tokens, cost, now))
+                    cursor.close()
+                thread_conn.commit()
+                thread_conn.close()
+                
+                logger.info(f"Streaming complete - User: {user_id}, Model: {model_name}, Cost: {cost:.4f}, Tokens: {prompt_tokens + completion_tokens}")
+            except Exception as e:
+                logger.error(f"Failed to update streaming cost: {str(e)}")
+        
+        # 在后台线程中更新费用
+        threading.Thread(target=update_cost, daemon=True).start()
+        
+        return Response(
+            generate(),
+            mimetype='text/event-stream',
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST,OPTIONS',
+                'Access-Control-Allow-Headers': '*',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'X-Accel-Buffering': 'no'
+            }
+        )
+        
+    except requests.exceptions.RequestException as e:
+        conn.close()
+        logger.error(f"Stream request error: {str(e)}")
+        return {"error": {"message": f"Stream error: {str(e)[:100]}"}}, 503, {'Access-Control-Allow-Origin': '*'}
+    except Exception as e:
+        conn.close()
+        logger.error(f"Stream error: {str(e)}")
+        return {"error": {"message": f"Stream error: {str(e)[:100]}"}}, 500, {'Access-Control-Allow-Origin': '*'}
+
 @app.errorhandler(403)
 def forbidden(e):
     return "<h1>403 - 无权限访问</h1><p>您没有权限访问此页面</p>", 403
@@ -1124,4 +1270,4 @@ def not_found(e):
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)
