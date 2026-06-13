@@ -1,18 +1,26 @@
-from flask import Flask, request, render_template, render_template_string, session, redirect, url_for, flash, abort
-import sqlite3
-import bcrypt
+from flask import Flask, request, render_template, render_template_string, session, redirect, url_for, abort
+import hashlib
 import uuid
 import requests
 import os
 import logging
 from datetime import datetime
-from dotenv import load_dotenv
+from functools import wraps
 
-load_dotenv()
+# PostgreSQL 支持是可选的，只在设置了 DATABASE_URL 时才需要
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'moran-ai-platform-2024-stable-version')
-DB_PATH = os.environ.get('DATABASE_PATH', '/tmp/platform.db')
+
+# 数据库配置 - 支持 PostgreSQL 和 SQLite
+DATABASE_URL = os.environ.get('DATABASE_URL')
+USE_POSTGRES = bool(DATABASE_URL)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,90 +34,212 @@ MENU_ITEMS = [
     ("profile", "👤 个人设置", "/profile"),
 ]
 
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def get_db():
+    if USE_POSTGRES:
+        if not PSYCOPG2_AVAILABLE:
+            raise RuntimeError("PostgreSQL 数据库需要 psycopg2 库，请安装: pip install psycopg2-binary")
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = False
+        return conn
+    else:
+        import sqlite3
+        db_path = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'platform.db'))
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+def execute_query(conn, query, params=None, fetch=False):
+    """统一的查询执行函数，兼容 PostgreSQL 和 SQLite"""
+    if USE_POSTGRES:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # 替换 SQLite 语法为 PostgreSQL 语法
+        query = query.replace('AUTOINCREMENT', 'SERIAL')
+        query = query.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY')
+        query = query.replace('?', '%s')
+        cursor.execute(query, params or ())
+        if fetch:
+            result = cursor.fetchall()
+            # 转换为字典列表
+            cursor.close()
+            return result
+        cursor.close()
+        return None
+    else:
+        cursor = conn.cursor()
+        cursor.execute(query, params or ())
+        if fetch:
+            result = cursor.fetchall()
+            cursor.close()
+            return result
+        cursor.close()
+        return None
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn = get_db()
     
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  username TEXT UNIQUE NOT NULL,
-                  password TEXT NOT NULL,
-                  balance REAL DEFAULT 0,
-                  is_admin INTEGER DEFAULT 0,
-                  status INTEGER DEFAULT 1,
-                  created_at TEXT)''')
+    # 创建用户表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            balance REAL DEFAULT 0,
+            is_admin INTEGER DEFAULT 0,
+            status INTEGER DEFAULT 1,
+            created_at TEXT
+        )
+    ''')
     
-    c.execute('''CREATE TABLE IF NOT EXISTS api_keys
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER NOT NULL,
-                  key TEXT UNIQUE NOT NULL,
-                  name TEXT DEFAULT '默认密钥',
-                  status INTEGER DEFAULT 1,
-                  created_at TEXT)''')
+    # 创建 API 密钥表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            key TEXT UNIQUE NOT NULL,
+            name TEXT DEFAULT '默认密钥',
+            status INTEGER DEFAULT 1,
+            created_at TEXT
+        )
+    ''')
     
-    c.execute('''CREATE TABLE IF NOT EXISTS cards
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  code TEXT UNIQUE NOT NULL,
-                  amount REAL NOT NULL,
-                  status INTEGER DEFAULT 0,
-                  used_by INTEGER,
-                  used_at TEXT,
-                  created_at TEXT)''')
+    # 创建卡密表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS cards (
+            id SERIAL PRIMARY KEY,
+            code TEXT UNIQUE NOT NULL,
+            amount REAL NOT NULL,
+            status INTEGER DEFAULT 0,
+            used_by INTEGER,
+            used_at TEXT,
+            created_at TEXT
+        )
+    ''')
     
-    c.execute('''CREATE TABLE IF NOT EXISTS models
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  name TEXT UNIQUE NOT NULL,
-                  display_name TEXT,
-                  base_url TEXT NOT NULL,
-                  api_key TEXT NOT NULL,
-                  input_price REAL NOT NULL,
-                  output_price REAL NOT NULL,
-                  status INTEGER DEFAULT 1,
-                  sort INTEGER DEFAULT 0)''')
+    # 创建模型表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS models (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            display_name TEXT,
+            base_url TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            input_price REAL NOT NULL,
+            output_price REAL NOT NULL,
+            status INTEGER DEFAULT 1,
+            sort INTEGER DEFAULT 0
+        )
+    ''')
     
-    c.execute('''CREATE TABLE IF NOT EXISTS logs
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  model TEXT,
-                  prompt_tokens INTEGER DEFAULT 0,
-                  completion_tokens INTEGER DEFAULT 0,
-                  cost REAL DEFAULT 0,
-                  created_at TEXT)''')
+    # 创建日志表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS logs (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            model TEXT,
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            cost REAL DEFAULT 0,
+            created_at TEXT
+        )
+    ''')
     
+    conn.commit()
+    
+    # 创建管理员账户
     try:
         admin_username = os.environ.get('ADMIN_USERNAME', 'MoRan')
         admin_password = os.environ.get('ADMIN_PASSWORD', 'yangyang')
-        pwd_hash = bcrypt.hashpw(admin_password.encode(), bcrypt.gensalt())
-        c.execute("INSERT INTO users (username,password,is_admin,balance,status,created_at) VALUES (?,?,?,?,?,?)",
-                  (admin_username, pwd_hash.decode(), 1, 9999.0, 1, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        c.execute("INSERT INTO api_keys (user_id,key,name,created_at) VALUES (?,?,?,?)",
-                  (1, "sk-" + str(uuid.uuid4()).replace("-",""), "管理员主密钥", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    except sqlite3.IntegrityError:
-        pass
+        pwd_hash = hash_password(admin_password)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        if USE_POSTGRES:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO users (username, password, is_admin, balance, status, created_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (admin_username, pwd_hash, 1, 9999.0, 1, now)
+            )
+            user_id = cursor.fetchone()[0]
+            cursor.execute(
+                "INSERT INTO api_keys (user_id, key, name, created_at) VALUES (%s, %s, %s, %s)",
+                (user_id, "sk-" + str(uuid.uuid4()).replace("-", ""), "管理员主密钥", now)
+            )
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO users (username, password, is_admin, balance, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (admin_username, pwd_hash, 1, 9999.0, 1, now)
+            )
+            user_id = cursor.lastrowid
+            cursor.execute(
+                "INSERT INTO api_keys (user_id, key, name, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, "sk-" + str(uuid.uuid4()).replace("-", ""), "管理员主密钥", now)
+            )
+            cursor.close()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.info(f"Admin user already exists or error: {e}")
     
+    # 创建默认模型
     try:
-        c.execute("INSERT INTO models (name,display_name,base_url,api_key,input_price,output_price,status) VALUES (?,?,?,?,?,?,?)",
-                  ("gpt-3.5-turbo", "GPT-3.5-Turbo", "https://openai.api2d.net/v1", "fk-替换为你的密钥", 0.005, 0.015, 1))
-    except sqlite3.IntegrityError:
-        pass
+        if USE_POSTGRES:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO models (name, display_name, base_url, api_key, input_price, output_price, status) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                ("gpt-3.5-turbo", "GPT-3.5-Turbo", "https://openai.api2d.net/v1", "fk-替换为你的密钥", 0.005, 0.015, 1)
+            )
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO models (name, display_name, base_url, api_key, input_price, output_price, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("gpt-3.5-turbo", "GPT-3.5-Turbo", "https://openai.api2d.net/v1", "fk-替换为你的密钥", 0.005, 0.015, 1)
+            )
+            cursor.close()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.info(f"Default model already exists or error: {e}")
     
-    conn.commit()
     conn.close()
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def row_to_dict(row):
+    """将数据库行转换为字典"""
+    if row is None:
+        return None
+    if USE_POSTGRES:
+        return dict(row)
+    else:
+        return dict(row) if hasattr(row, 'keys') else row
 
 def get_user():
     if 'user_id' not in session:
         return None
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    if USE_POSTGRES:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM users WHERE id = %s", (session['user_id'],))
+        user = cursor.fetchone()
+        cursor.close()
+    else:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE id = ?", (session['user_id'],))
+        row = cursor.fetchone()
+        cursor.close()
+        if row:
+            columns = [desc[0] for desc in cursor.description]
+            user = dict(zip(columns, row))
+        else:
+            user = None
     conn.close()
     return user
 
 def login_required(f):
+    @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
             return redirect('/login')
@@ -117,6 +247,7 @@ def login_required(f):
     return decorated_function
 
 def admin_required(f):
+    @wraps(f)
     def decorated_function(*args, **kwargs):
         if session.get('is_admin', 0) != 1:
             abort(403)
@@ -141,10 +272,24 @@ def login_page():
             error = "请输入用户名和密码"
         else:
             conn = get_db()
-            user = conn.execute("SELECT * FROM users WHERE username=? AND status=1", (username,)).fetchone()
+            if USE_POSTGRES:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute("SELECT * FROM users WHERE username = %s AND status = 1", (username,))
+                user = cursor.fetchone()
+                cursor.close()
+            else:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM users WHERE username = ? AND status = 1", (username,))
+                row = cursor.fetchone()
+                cursor.close()
+                if row:
+                    columns = [desc[0] for desc in cursor.description]
+                    user = dict(zip(columns, row))
+                else:
+                    user = None
             conn.close()
             
-            if user and bcrypt.checkpw(password.encode(), user['password'].encode()):
+            if user and user['password'] == hash_password(password):
                 session['user_id'] = user['id']
                 session['is_admin'] = user['is_admin']
                 return redirect('/dashboard')
@@ -199,17 +344,41 @@ def register_page():
             error = "密码长度至少6个字符"
         else:
             try:
-                pwd_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+                pwd_hash = hash_password(password)
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 conn = get_db()
-                conn.execute("INSERT INTO users (username,password,balance,status,created_at) VALUES (?,?,0,1,?)",
-                            (username, pwd_hash.decode(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                uid = conn.execute("SELECT last_insert_rowid() as id").fetchone()['id']
-                conn.execute("INSERT INTO api_keys (user_id,key,name,created_at) VALUES (?,?,?,?)",
-                          (uid, "sk-" + str(uuid.uuid4()).replace("-",""), "默认密钥", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                
+                if USE_POSTGRES:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO users (username, password, balance, status, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                        (username, pwd_hash, 0, 1, now)
+                    )
+                    uid = cursor.fetchone()[0]
+                    cursor.execute(
+                        "INSERT INTO api_keys (user_id, key, name, created_at) VALUES (%s, %s, %s, %s)",
+                        (uid, "sk-" + str(uuid.uuid4()).replace("-", ""), "默认密钥", now)
+                    )
+                    cursor.close()
+                else:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO users (username, password, balance, status, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (username, pwd_hash, 0, 1, now)
+                    )
+                    uid = cursor.lastrowid
+                    cursor.execute(
+                        "INSERT INTO api_keys (user_id, key, name, created_at) VALUES (?, ?, ?, ?)",
+                        (uid, "sk-" + str(uuid.uuid4()).replace("-", ""), "默认密钥", now)
+                    )
+                    cursor.close()
+                
                 conn.commit()
                 conn.close()
                 return redirect('/login')
-            except sqlite3.IntegrityError:
+            except Exception as e:
+                conn.rollback()
+                conn.close()
                 error = "用户名已存在"
     
     return render_template_string("""
@@ -250,6 +419,43 @@ def logout():
     session.clear()
     return redirect('/login')
 
+def fetch_all(conn, query, params=None):
+    """获取所有结果"""
+    if USE_POSTGRES:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(query, params or ())
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    else:
+        cursor = conn.cursor()
+        cursor.execute(query, params or ())
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        results = [dict(zip(columns, row)) for row in rows]
+        cursor.close()
+        return results
+
+def fetch_one(conn, query, params=None):
+    """获取单个结果"""
+    if USE_POSTGRES:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(query, params or ())
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    else:
+        cursor = conn.cursor()
+        cursor.execute(query, params or ())
+        row = cursor.fetchone()
+        if row:
+            columns = [desc[0] for desc in cursor.description]
+            result = dict(zip(columns, row))
+        else:
+            result = None
+        cursor.close()
+        return result
+
 @app.route('/dashboard')
 @login_required
 def dashboard():
@@ -257,15 +463,17 @@ def dashboard():
     conn = get_db()
     
     today = datetime.now().strftime("%Y-%m-%d")
-    today_logs = conn.execute("SELECT SUM(cost) as cost, COUNT(*) as cnt FROM logs WHERE user_id=? AND date(created_at)=?",
-                            (session['user_id'], today)).fetchone()
-    total_logs = conn.execute("SELECT SUM(cost) as cost, COUNT(*) as cnt FROM logs WHERE user_id=?",
-                            (session['user_id'],)).fetchone()
-    key_count = conn.execute("SELECT COUNT(*) as cnt FROM api_keys WHERE user_id=? AND status=1",
-                           (session['user_id'],)).fetchone()
+    if USE_POSTGRES:
+        today_logs = fetch_one(conn, "SELECT SUM(cost) as cost, COUNT(*) as cnt FROM logs WHERE user_id = %s AND DATE(created_at) = %s", (session['user_id'], today))
+        total_logs = fetch_one(conn, "SELECT SUM(cost) as cost, COUNT(*) as cnt FROM logs WHERE user_id = %s", (session['user_id'],))
+        key_count = fetch_one(conn, "SELECT COUNT(*) as cnt FROM api_keys WHERE user_id = %s AND status = 1", (session['user_id'],))
+    else:
+        today_logs = fetch_one(conn, "SELECT SUM(cost) as cost, COUNT(*) as cnt FROM logs WHERE user_id = ? AND DATE(created_at) = ?", (session['user_id'], today))
+        total_logs = fetch_one(conn, "SELECT SUM(cost) as cost, COUNT(*) as cnt FROM logs WHERE user_id = ?", (session['user_id'],))
+        key_count = fetch_one(conn, "SELECT COUNT(*) as cnt FROM api_keys WHERE user_id = ? AND status = 1", (session['user_id'],))
     conn.close()
     
-    return render_template('base.html', 
+    return render_template('dashboard.html', 
                            page_title='仪表盘', 
                            user=user, 
                            menu_items=MENU_ITEMS, 
@@ -281,7 +489,10 @@ def dashboard():
 def keys_page():
     user = get_user()
     conn = get_db()
-    keys = conn.execute("SELECT * FROM api_keys WHERE user_id=? ORDER BY id DESC", (session['user_id'],)).fetchall()
+    if USE_POSTGRES:
+        keys = fetch_all(conn, "SELECT * FROM api_keys WHERE user_id = %s ORDER BY id DESC", (session['user_id'],))
+    else:
+        keys = fetch_all(conn, "SELECT * FROM api_keys WHERE user_id = ? ORDER BY id DESC", (session['user_id'],))
     conn.close()
     
     return render_template('keys.html', 
@@ -296,9 +507,18 @@ def keys_page():
 def add_key():
     name = request.form.get('name', '新密钥').strip()[:50]
     key = "sk-" + str(uuid.uuid4()).replace("-","")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_db()
-    conn.execute("INSERT INTO api_keys (user_id,key,name,created_at) VALUES (?,?,?,?)",
-                (session['user_id'], key, name, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    if USE_POSTGRES:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO api_keys (user_id, key, name, created_at) VALUES (%s, %s, %s, %s)",
+                      (session['user_id'], key, name, now))
+        cursor.close()
+    else:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO api_keys (user_id, key, name, created_at) VALUES (?, ?, ?, ?)",
+                      (session['user_id'], key, name, now))
+        cursor.close()
     conn.commit()
     conn.close()
     return redirect('/keys')
@@ -307,10 +527,20 @@ def add_key():
 @login_required
 def toggle_key(kid):
     conn = get_db()
-    k = conn.execute("SELECT * FROM api_keys WHERE id=? AND user_id=?", (kid, session['user_id'])).fetchone()
+    if USE_POSTGRES:
+        k = fetch_one(conn, "SELECT * FROM api_keys WHERE id = %s AND user_id = %s", (kid, session['user_id']))
+    else:
+        k = fetch_one(conn, "SELECT * FROM api_keys WHERE id = ? AND user_id = ?", (kid, session['user_id']))
     if k:
         new_status = 0 if k['status'] else 1
-        conn.execute("UPDATE api_keys SET status=? WHERE id=?", (new_status, kid))
+        if USE_POSTGRES:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE api_keys SET status = %s WHERE id = %s", (new_status, kid))
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE api_keys SET status = ? WHERE id = ?", (new_status, kid))
+            cursor.close()
         conn.commit()
     conn.close()
     return redirect('/keys')
@@ -319,7 +549,14 @@ def toggle_key(kid):
 @login_required
 def delete_key(kid):
     conn = get_db()
-    conn.execute("DELETE FROM api_keys WHERE id=? AND user_id=?", (kid, session['user_id']))
+    if USE_POSTGRES:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM api_keys WHERE id = %s AND user_id = %s", (kid, session['user_id']))
+        cursor.close()
+    else:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM api_keys WHERE id = ? AND user_id = ?", (kid, session['user_id']))
+        cursor.close()
     conn.commit()
     conn.close()
     return redirect('/keys')
@@ -329,7 +566,10 @@ def delete_key(kid):
 def logs_page():
     user = get_user()
     conn = get_db()
-    logs = conn.execute("SELECT * FROM logs WHERE user_id=? ORDER BY id DESC LIMIT 50", (session['user_id'],)).fetchall()
+    if USE_POSTGRES:
+        logs = fetch_all(conn, "SELECT * FROM logs WHERE user_id = %s ORDER BY id DESC LIMIT 50", (session['user_id'],))
+    else:
+        logs = fetch_all(conn, "SELECT * FROM logs WHERE user_id = ? ORDER BY id DESC LIMIT 50", (session['user_id'],))
     conn.close()
     
     return render_template('logs.html', 
@@ -344,7 +584,10 @@ def logs_page():
 def models_page():
     user = get_user()
     conn = get_db()
-    models = conn.execute("SELECT * FROM models WHERE status=1 ORDER BY sort ASC").fetchall()
+    if USE_POSTGRES:
+        models = fetch_all(conn, "SELECT * FROM models WHERE status = 1 ORDER BY sort ASC")
+    else:
+        models = fetch_all(conn, "SELECT * FROM models WHERE status = 1 ORDER BY sort ASC")
     conn.close()
     
     return render_template('models.html', 
@@ -368,11 +611,24 @@ def recharge_page():
             msg_type = "error"
         else:
             conn = get_db()
-            card = conn.execute("SELECT * FROM cards WHERE code=? AND status=0", (code,)).fetchone()
+            if USE_POSTGRES:
+                card = fetch_one(conn, "SELECT * FROM cards WHERE code = %s AND status = 0", (code,))
+            else:
+                card = fetch_one(conn, "SELECT * FROM cards WHERE code = ? AND status = 0", (code,))
             if card:
-                conn.execute("UPDATE cards SET status=1, used_by=?, used_at=? WHERE id=?",
-                            (session['user_id'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), card['id']))
-                conn.execute("UPDATE users SET balance=balance+? WHERE id=?", (card['amount'], session['user_id']))
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if USE_POSTGRES:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE cards SET status = 1, used_by = %s, used_at = %s WHERE id = %s",
+                                  (session['user_id'], now, card['id']))
+                    cursor.execute("UPDATE users SET balance = balance + %s WHERE id = %s", (card['amount'], session['user_id']))
+                    cursor.close()
+                else:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE cards SET status = 1, used_by = ?, used_at = ? WHERE id = ?",
+                                  (session['user_id'], now, card['id']))
+                    cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (card['amount'], session['user_id']))
+                    cursor.close()
                 conn.commit()
                 msg = f'充值成功！到账 ¥{card["amount"]}'
                 msg_type = "success"
@@ -383,7 +639,10 @@ def recharge_page():
             conn.close()
     
     conn = get_db()
-    records = conn.execute("SELECT * FROM cards WHERE used_by=? AND status=1 ORDER BY id DESC LIMIT 10", (session['user_id'],)).fetchall()
+    if USE_POSTGRES:
+        records = fetch_all(conn, "SELECT * FROM cards WHERE used_by = %s AND status = 1 ORDER BY id DESC LIMIT 10", (session['user_id'],))
+    else:
+        records = fetch_all(conn, "SELECT * FROM cards WHERE used_by = ? AND status = 1 ORDER BY id DESC LIMIT 10", (session['user_id'],))
     conn.close()
     
     return render_template('recharge.html', 
@@ -416,10 +675,17 @@ def profile_page():
         elif len(new_password) < 6:
             msg = "密码长度至少6个字符"
             msg_type = "error"
-        elif bcrypt.checkpw(old_password.encode(), user['password'].encode()):
-            pwd_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
+        elif user['password'] == hash_password(old_password):
+            pwd_hash = hash_password(new_password)
             conn = get_db()
-            conn.execute("UPDATE users SET password=? WHERE id=?", (pwd_hash.decode(), session['user_id']))
+            if USE_POSTGRES:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET password = %s WHERE id = %s", (pwd_hash, session['user_id']))
+                cursor.close()
+            else:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET password = ? WHERE id = ?", (pwd_hash, session['user_id']))
+                cursor.close()
             conn.commit()
             conn.close()
             msg = "密码修改成功"
@@ -443,10 +709,16 @@ def admin_home():
     user = get_user()
     conn = get_db()
     
-    total_users = conn.execute("SELECT COUNT(*) as cnt FROM users").fetchone()['cnt']
-    total_revenue = conn.execute("SELECT SUM(amount) as sum FROM cards WHERE status=1").fetchone()['sum'] or 0
-    total_calls = conn.execute("SELECT COUNT(*) as cnt FROM logs").fetchone()['cnt']
-    total_cost = conn.execute("SELECT SUM(cost) as sum FROM logs").fetchone()['sum'] or 0
+    if USE_POSTGRES:
+        total_users = fetch_one(conn, "SELECT COUNT(*) as cnt FROM users")
+        total_revenue = fetch_one(conn, "SELECT SUM(amount) as sum FROM cards WHERE status = 1")
+        total_calls = fetch_one(conn, "SELECT COUNT(*) as cnt FROM logs")
+        total_cost = fetch_one(conn, "SELECT SUM(cost) as sum FROM logs")
+    else:
+        total_users = fetch_one(conn, "SELECT COUNT(*) as cnt FROM users")
+        total_revenue = fetch_one(conn, "SELECT SUM(amount) as sum FROM cards WHERE status = 1")
+        total_calls = fetch_one(conn, "SELECT COUNT(*) as cnt FROM logs")
+        total_cost = fetch_one(conn, "SELECT SUM(cost) as sum FROM logs")
     conn.close()
     
     return render_template('admin_dashboard.html', 
@@ -454,10 +726,10 @@ def admin_home():
                            user=user, 
                            menu_items=MENU_ITEMS, 
                            active_menu='admin',
-                           total_users=total_users,
-                           total_revenue=total_revenue,
-                           total_calls=total_calls,
-                           total_cost=total_cost)
+                           total_users=total_users['cnt'],
+                           total_revenue=total_revenue['sum'] or 0,
+                           total_calls=total_calls['cnt'],
+                           total_cost=total_cost['sum'] or 0)
 
 @app.route('/admin/users')
 @login_required
@@ -465,7 +737,10 @@ def admin_home():
 def admin_users():
     user = get_user()
     conn = get_db()
-    users = conn.execute("SELECT * FROM users ORDER BY id DESC").fetchall()
+    if USE_POSTGRES:
+        users = fetch_all(conn, "SELECT * FROM users ORDER BY id DESC")
+    else:
+        users = fetch_all(conn, "SELECT * FROM users ORDER BY id DESC")
     conn.close()
     
     return render_template('admin_users.html', 
@@ -484,14 +759,24 @@ def edit_user(uid):
         try:
             balance = float(request.form.get('balance', 0))
             status = int(request.form.get('status', 1))
-            conn.execute("UPDATE users SET balance=?, status=? WHERE id=?", (balance, status, uid))
+            if USE_POSTGRES:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET balance = %s, status = %s WHERE id = %s", (balance, status, uid))
+                cursor.close()
+            else:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET balance = ?, status = ? WHERE id = ?", (balance, status, uid))
+                cursor.close()
             conn.commit()
         except (ValueError, TypeError):
             pass
         conn.close()
         return redirect('/admin/users')
     
-    u = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    if USE_POSTGRES:
+        u = fetch_one(conn, "SELECT * FROM users WHERE id = %s", (uid,))
+    else:
+        u = fetch_one(conn, "SELECT * FROM users WHERE id = ?", (uid,))
     user = get_user()
     conn.close()
     
@@ -508,7 +793,10 @@ def edit_user(uid):
 def admin_models():
     user = get_user()
     conn = get_db()
-    models = conn.execute("SELECT * FROM models ORDER BY sort ASC").fetchall()
+    if USE_POSTGRES:
+        models = fetch_all(conn, "SELECT * FROM models ORDER BY sort ASC")
+    else:
+        models = fetch_all(conn, "SELECT * FROM models ORDER BY sort ASC")
     conn.close()
     
     return render_template('admin_models.html', 
@@ -524,12 +812,21 @@ def admin_models():
 def add_model():
     try:
         conn = get_db()
-        conn.execute("INSERT INTO models (name,display_name,base_url,api_key,input_price,output_price) VALUES (?,?,?,?,?,?)",
-                    (request.form['name'], request.form.get('display_name',''), request.form['base_url'],
-                     request.form['api_key'], float(request.form['input_price']), float(request.form['output_price'])))
+        if USE_POSTGRES:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO models (name, display_name, base_url, api_key, input_price, output_price) VALUES (%s, %s, %s, %s, %s, %s)",
+                          (request.form['name'], request.form.get('display_name',''), request.form['base_url'],
+                           request.form['api_key'], float(request.form['input_price']), float(request.form['output_price'])))
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO models (name, display_name, base_url, api_key, input_price, output_price) VALUES (?, ?, ?, ?, ?, ?)",
+                          (request.form['name'], request.form.get('display_name',''), request.form['base_url'],
+                           request.form['api_key'], float(request.form['input_price']), float(request.form['output_price'])))
+            cursor.close()
         conn.commit()
-    except (sqlite3.Error, ValueError):
-        pass
+    except Exception as e:
+        logger.error(f"Error adding model: {e}")
     finally:
         conn.close()
     return redirect('/admin/models')
@@ -539,9 +836,20 @@ def add_model():
 @admin_required
 def toggle_model(mid):
     conn = get_db()
-    m = conn.execute("SELECT * FROM models WHERE id=?", (mid,)).fetchone()
+    if USE_POSTGRES:
+        m = fetch_one(conn, "SELECT * FROM models WHERE id = %s", (mid,))
+    else:
+        m = fetch_one(conn, "SELECT * FROM models WHERE id = ?", (mid,))
     if m:
-        conn.execute("UPDATE models SET status=? WHERE id=?", (0 if m['status'] else 1, mid))
+        new_status = 0 if m['status'] else 1
+        if USE_POSTGRES:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE models SET status = %s WHERE id = %s", (new_status, mid))
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE models SET status = ? WHERE id = ?", (new_status, mid))
+            cursor.close()
         conn.commit()
     conn.close()
     return redirect('/admin/models')
@@ -551,7 +859,14 @@ def toggle_model(mid):
 @admin_required
 def delete_model(mid):
     conn = get_db()
-    conn.execute("DELETE FROM models WHERE id=?", (mid,))
+    if USE_POSTGRES:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM models WHERE id = %s", (mid,))
+        cursor.close()
+    else:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM models WHERE id = ?", (mid,))
+        cursor.close()
     conn.commit()
     conn.close()
     return redirect('/admin/models')
@@ -562,7 +877,10 @@ def delete_model(mid):
 def admin_cards():
     user = get_user()
     conn = get_db()
-    cards = conn.execute("SELECT * FROM cards ORDER BY id DESC LIMIT 50").fetchall()
+    if USE_POSTGRES:
+        cards = fetch_all(conn, "SELECT * FROM cards ORDER BY id DESC LIMIT 50")
+    else:
+        cards = fetch_all(conn, "SELECT * FROM cards ORDER BY id DESC LIMIT 50")
     conn.close()
     
     return render_template('admin_cards.html', 
@@ -581,16 +899,26 @@ def generate_cards():
         amount = float(request.form.get('amount', 0))
         count = max(1, min(100, int(request.form.get('count', 10))))
         new_cards = []
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = get_db()
         for _ in range(count):
             code = str(uuid.uuid4()).replace('-','')[:16].upper()
-            conn.execute("INSERT INTO cards (code,amount,created_at) VALUES (?,?,?)",
-                        (code, amount, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            if USE_POSTGRES:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO cards (code, amount, created_at) VALUES (%s, %s, %s)", (code, amount, now))
+                cursor.close()
+            else:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO cards (code, amount, created_at) VALUES (?, ?, ?)", (code, amount, now))
+                cursor.close()
             new_cards.append(code)
         conn.commit()
         
         user = get_user()
-        cards = conn.execute("SELECT * FROM cards ORDER BY id DESC LIMIT 50").fetchall()
+        if USE_POSTGRES:
+            cards = fetch_all(conn, "SELECT * FROM cards ORDER BY id DESC LIMIT 50")
+        else:
+            cards = fetch_all(conn, "SELECT * FROM cards ORDER BY id DESC LIMIT 50")
         conn.close()
         
         return render_template('admin_cards.html', 
@@ -610,11 +938,18 @@ def generate_cards():
 def admin_logs():
     user = get_user()
     conn = get_db()
-    logs = conn.execute("""
-        SELECT logs.*, users.username 
-        FROM logs LEFT JOIN users ON logs.user_id = users.id 
-        ORDER BY logs.id DESC LIMIT 100
-    """).fetchall()
+    if USE_POSTGRES:
+        logs = fetch_all(conn, """
+            SELECT logs.*, users.username 
+            FROM logs LEFT JOIN users ON logs.user_id = users.id 
+            ORDER BY logs.id DESC LIMIT 100
+        """)
+    else:
+        logs = fetch_all(conn, """
+            SELECT logs.*, users.username 
+            FROM logs LEFT JOIN users ON logs.user_id = users.id 
+            ORDER BY logs.id DESC LIMIT 100
+        """)
     conn.close()
     
     return render_template('admin_logs.html', 
@@ -641,7 +976,10 @@ def chat_completions():
     api_key = auth.replace('Bearer ', '').strip()
     
     conn = get_db()
-    key_info = conn.execute("SELECT * FROM api_keys WHERE key=? AND status=1", (api_key,)).fetchone()
+    if USE_POSTGRES:
+        key_info = fetch_one(conn, "SELECT * FROM api_keys WHERE key = %s AND status = 1", (api_key,))
+    else:
+        key_info = fetch_one(conn, "SELECT * FROM api_keys WHERE key = ? AND status = 1", (api_key,))
     
     if not key_info:
         conn.close()
@@ -649,7 +987,10 @@ def chat_completions():
         return {"error": {"message": "API Key 无效或已禁用"}}, 401, {'Access-Control-Allow-Origin': '*'}
     
     user_id = key_info['user_id']
-    user = conn.execute("SELECT * FROM users WHERE id=? AND status=1", (user_id,)).fetchone()
+    if USE_POSTGRES:
+        user = fetch_one(conn, "SELECT * FROM users WHERE id = %s AND status = 1", (user_id,))
+    else:
+        user = fetch_one(conn, "SELECT * FROM users WHERE id = ? AND status = 1", (user_id,))
     
     if not user:
         conn.close()
@@ -662,7 +1003,10 @@ def chat_completions():
         return {"error": {"message": "请求体为空"}}, 400, {'Access-Control-Allow-Origin': '*'}
     
     model_name = body.get('model', 'gpt-3.5-turbo')
-    model_cfg = conn.execute("SELECT * FROM models WHERE name=? AND status=1", (model_name,)).fetchone()
+    if USE_POSTGRES:
+        model_cfg = fetch_one(conn, "SELECT * FROM models WHERE name = %s AND status = 1", (model_name,))
+    else:
+        model_cfg = fetch_one(conn, "SELECT * FROM models WHERE name = ? AND status = 1", (model_name,))
     
     if not model_cfg:
         conn.close()
@@ -693,11 +1037,20 @@ def chat_completions():
             completion_tokens = 0
         
         cost = (prompt_tokens / 1000) * model_cfg['input_price'] + (completion_tokens / 1000) * model_cfg['output_price']
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        conn.execute("UPDATE users SET balance=balance-? WHERE id=?", (cost, user_id))
-        conn.execute("INSERT INTO logs (user_id,model,prompt_tokens,completion_tokens,cost,created_at) VALUES (?,?,?,?,?,?)",
-                    (user_id, model_name, prompt_tokens, completion_tokens, cost, 
-                     datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        if USE_POSTGRES:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET balance = balance - %s WHERE id = %s", (cost, user_id))
+            cursor.execute("INSERT INTO logs (user_id, model, prompt_tokens, completion_tokens, cost, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                          (user_id, model_name, prompt_tokens, completion_tokens, cost, now))
+            cursor.close()
+        else:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (cost, user_id))
+            cursor.execute("INSERT INTO logs (user_id, model, prompt_tokens, completion_tokens, cost, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                          (user_id, model_name, prompt_tokens, completion_tokens, cost, now))
+            cursor.close()
         conn.commit()
         conn.close()
         
