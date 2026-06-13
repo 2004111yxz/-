@@ -15,12 +15,16 @@ try:
 except ImportError:
     PSYCOPG2_AVAILABLE = False
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates'))
 app.secret_key = os.environ.get('SECRET_KEY', 'moran-ai-platform-2024-stable-version')
 
 # 数据库配置 - 支持 PostgreSQL 和 SQLite
 DATABASE_URL = os.environ.get('DATABASE_URL')
 USE_POSTGRES = bool(DATABASE_URL)
+
+# 启动时检查依赖
+if USE_POSTGRES and not PSYCOPG2_AVAILABLE:
+    raise RuntimeError("检测到 DATABASE_URL 环境变量，但 psycopg2 库未安装。请运行: pip install psycopg2-binary")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
