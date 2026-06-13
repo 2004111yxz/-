@@ -1039,7 +1039,18 @@ def chat_completions():
             },
             timeout=120
         )
-        result = resp.json()
+        
+        if not resp.text:
+            conn.close()
+            logger.error(f"Empty response from upstream: {model_name}")
+            return {"error": {"message": "Empty response from upstream service"}}, 503, {'Access-Control-Allow-Origin': '*'}
+        
+        try:
+            result = resp.json()
+        except ValueError:
+            conn.close()
+            logger.error(f"Invalid JSON response: {resp.text[:200]}")
+            return {"error": {"message": f"Invalid response from upstream: {resp.text[:100]}"}}, 503, {'Access-Control-Allow-Origin': '*'}
         
         if 'usage' in result:
             prompt_tokens = result['usage'].get('prompt_tokens', 0)
