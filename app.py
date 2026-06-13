@@ -162,6 +162,42 @@ def init_db():
         )
     ''')
     
+    # 创建对话历史表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS conversations (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            title TEXT DEFAULT '未命名对话',
+            model TEXT,
+            category TEXT DEFAULT 'default',
+            status INTEGER DEFAULT 1,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    ''')
+    
+    # 创建对话消息表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS messages (
+            id SERIAL PRIMARY KEY,
+            conversation_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT
+        )
+    ''')
+    
+    # 创建对话分类表
+    execute_query(conn, '''
+        CREATE TABLE IF NOT EXISTS categories (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            name TEXT NOT NULL,
+            color TEXT DEFAULT '#1890ff',
+            created_at TEXT
+        )
+    ''')
+    
     conn.commit()
     
     # 创建管理员账户
@@ -636,6 +672,7 @@ def chat_page():
     conn.close()
     
     selected_model = request.args.get('model', models[0]['name'] if models else 'gpt-3.5-turbo')
+    conversation_id = request.args.get('conversation_id', '')
     
     return render_template('chat.html', 
                            page_title='AI 对话', 
@@ -644,7 +681,349 @@ def chat_page():
                            active_menu='chat',
                            models=models,
                            selected_model=selected_model,
-                           api_key=api_key['key'] if api_key else '')
+                           api_key=api_key['key'] if api_key else '',
+                           conversation_id=conversation_id)
+
+
+@app.route('/api/conversations', methods=['GET'])
+@login_required
+def get_conversations():
+    user_id = session['user_id']
+    page = int(request.args.get('page', 1))
+    page_size = int(request.args.get('page_size', 20))
+    search = request.args.get('search', '').strip()
+    category = request.args.get('category', '')
+    
+    conn = get_db()
+    offset = (page - 1) * page_size
+    
+    query = "SELECT c.*, COUNT(m.id) as message_count FROM conversations c LEFT JOIN messages m ON c.id = m.conversation_id WHERE c.user_id = "
+    params = [user_id]
+    
+    if search:
+        query += " AND (c.title LIKE %s OR EXISTS (SELECT 1 FROM messages m2 WHERE m2.conversation_id = c.id AND m2.content LIKE %s))" if USE_POSTGRES else " AND (c.title LIKE ? OR EXISTS (SELECT 1 FROM messages m2 WHERE m2.conversation_id = c.id AND m2.content LIKE ?))"
+        search_pattern = f"%{search}%"
+        params.extend([search_pattern, search_pattern])
+    
+    if category and category != 'all':
+        query += " AND c.category = " + ("%s" if USE_POSTGRES else "?")
+        params.append(category)
+    
+    query += " GROUP BY c.id ORDER BY c.updated_at DESC LIMIT " + ("%s OFFSET %s" if USE_POSTGRES else "? OFFSET ?")
+    params.extend([page_size, offset])
+    
+    if USE_POSTGRES:
+        conversations = fetch_all(conn, query, tuple(params))
+    else:
+        conversations = fetch_all(conn, query, tuple(params))
+    
+    # 获取总数
+    count_query = "SELECT COUNT(*) FROM conversations WHERE user_id = " + ("%s" if USE_POSTGRES else "?")
+    count_params = [user_id]
+    if search:
+        count_query += " AND (title LIKE %s OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.content LIKE %s))" if USE_POSTGRES else " AND (title LIKE ? OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.content LIKE ?))"
+        count_params.extend([search_pattern, search_pattern])
+    if category and category != 'all':
+        count_query += " AND category = " + ("%s" if USE_POSTGRES else "?")
+        count_params.append(category)
+    
+    total = fetch_one(conn, count_query, tuple(count_params))[0] if USE_POSTGRES else fetch_one(conn, count_query, tuple(count_params))[0]
+    conn.close()
+    
+    return jsonify({
+        'data': conversations,
+        'total': total,
+        'page': page,
+        'page_size': page_size
+    })
+
+
+@app.route('/api/conversations/<int:conv_id>', methods=['GET'])
+@login_required
+def get_conversation(conv_id):
+    user_id = session['user_id']
+    conn = get_db()
+    
+    if USE_POSTGRES:
+        conv = fetch_one(conn, "SELECT * FROM conversations WHERE id = %s AND user_id = %s", (conv_id, user_id))
+        messages = fetch_all(conn, "SELECT * FROM messages WHERE conversation_id = %s ORDER BY id ASC", (conv_id,))
+    else:
+        conv = fetch_one(conn, "SELECT * FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
+        messages = fetch_all(conn, "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id ASC", (conv_id,))
+    
+    conn.close()
+    
+    if not conv:
+        return jsonify({'error': '对话不存在'}), 404
+    
+    return jsonify({
+        'conversation': conv,
+        'messages': messages
+    })
+
+
+@app.route('/api/conversations', methods=['POST'])
+@login_required
+def create_conversation():
+    user_id = session['user_id']
+    data = request.json
+    
+    title = data.get('title', '未命名对话')
+    model = data.get('model', '')
+    category = data.get('category', 'default')
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    conn = get_db()
+    if USE_POSTGRES:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO conversations (user_id, title, model, category, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (user_id, title, model, category, now, now)
+        )
+        conv_id = cursor.fetchone()[0]
+        cursor.close()
+    else:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO conversations (user_id, title, model, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, title, model, category, now, now)
+        )
+        conv_id = cursor.lastrowid
+        cursor.close()
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'id': conv_id, 'title': title}), 201
+
+
+@app.route('/api/conversations/<int:conv_id>', methods=['PUT'])
+@login_required
+def update_conversation(conv_id):
+    user_id = session['user_id']
+    data = request.json
+    
+    conn = get_db()
+    if USE_POSTGRES:
+        conv = fetch_one(conn, "SELECT * FROM conversations WHERE id = %s AND user_id = %s", (conv_id, user_id))
+    else:
+        conv = fetch_one(conn, "SELECT * FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
+    
+    if not conv:
+        conn.close()
+        return jsonify({'error': '对话不存在'}), 404
+    
+    updates = []
+    params = []
+    
+    if 'title' in data:
+        updates.append("title = " + ("%s" if USE_POSTGRES else "?"))
+        params.append(data['title'])
+    if 'category' in data:
+        updates.append("category = " + ("%s" if USE_POSTGRES else "?"))
+        params.append(data['category'])
+    if 'status' in data:
+        updates.append("status = " + ("%s" if USE_POSTGRES else "?"))
+        params.append(data['status'])
+    
+    updates.append("updated_at = " + ("%s" if USE_POSTGRES else "?"))
+    params.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    
+    params.append(conv_id)
+    params.append(user_id)
+    
+    query = "UPDATE conversations SET " + ", ".join(updates) + " WHERE id = " + ("%s AND user_id = %s" if USE_POSTGRES else "? AND user_id = ?")
+    
+    execute_query(conn, query, tuple(params))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True})
+
+
+@app.route('/api/conversations/<int:conv_id>', methods=['DELETE'])
+@login_required
+def delete_conversation(conv_id):
+    user_id = session['user_id']
+    conn = get_db()
+    
+    if USE_POSTGRES:
+        conv = fetch_one(conn, "SELECT * FROM conversations WHERE id = %s AND user_id = %s", (conv_id, user_id))
+    else:
+        conv = fetch_one(conn, "SELECT * FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
+    
+    if not conv:
+        conn.close()
+        return jsonify({'error': '对话不存在'}), 404
+    
+    execute_query(conn, "DELETE FROM messages WHERE conversation_id = " + ("%s" if USE_POSTGRES else "?"), (conv_id,))
+    execute_query(conn, "DELETE FROM conversations WHERE id = " + ("%s" if USE_POSTGRES else "?"), (conv_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True})
+
+
+@app.route('/api/conversations/<int:conv_id>/messages', methods=['POST'])
+@login_required
+def add_message(conv_id):
+    user_id = session['user_id']
+    data = request.json
+    
+    role = data.get('role', 'user')
+    content = data.get('content', '')
+    
+    conn = get_db()
+    if USE_POSTGRES:
+        conv = fetch_one(conn, "SELECT * FROM conversations WHERE id = %s AND user_id = %s", (conv_id, user_id))
+    else:
+        conv = fetch_one(conn, "SELECT * FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
+    
+    if not conv:
+        conn.close()
+        return jsonify({'error': '对话不存在'}), 404
+    
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    if USE_POSTGRES:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO messages (conversation_id, role, content, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
+            (conv_id, role, content, now)
+        )
+        msg_id = cursor.fetchone()[0]
+        cursor.close()
+    else:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            (conv_id, role, content, now)
+        )
+        msg_id = cursor.lastrowid
+        cursor.close()
+    
+    execute_query(conn, "UPDATE conversations SET updated_at = " + ("%s" if USE_POSTGRES else "?") + " WHERE id = " + ("%s" if USE_POSTGRES else "?"), (now, conv_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'id': msg_id}), 201
+
+
+@app.route('/api/categories', methods=['GET'])
+@login_required
+def get_categories():
+    user_id = session['user_id']
+    conn = get_db()
+    
+    if USE_POSTGRES:
+        categories = fetch_all(conn, "SELECT * FROM categories WHERE user_id = %s OR user_id IS NULL ORDER BY name ASC", (user_id,))
+    else:
+        categories = fetch_all(conn, "SELECT * FROM categories WHERE user_id = ? OR user_id IS NULL ORDER BY name ASC", (user_id,))
+    
+    conn.close()
+    
+    return jsonify(categories)
+
+
+@app.route('/api/categories', methods=['POST'])
+@login_required
+def create_category():
+    user_id = session['user_id']
+    data = request.json
+    
+    name = data.get('name', '')
+    color = data.get('color', '#1890ff')
+    
+    if not name:
+        return jsonify({'error': '分类名称不能为空'}), 400
+    
+    conn = get_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    if USE_POSTGRES:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO categories (user_id, name, color, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
+            (user_id, name, color, now)
+        )
+        cat_id = cursor.fetchone()[0]
+        cursor.close()
+    else:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO categories (user_id, name, color, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, name, color, now)
+        )
+        cat_id = cursor.lastrowid
+        cursor.close()
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'id': cat_id, 'name': name, 'color': color}), 201
+
+
+@app.route('/api/categories/<int:cat_id>', methods=['PUT'])
+@login_required
+def update_category(cat_id):
+    user_id = session['user_id']
+    data = request.json
+    
+    conn = get_db()
+    if USE_POSTGRES:
+        cat = fetch_one(conn, "SELECT * FROM categories WHERE id = %s AND user_id = %s", (cat_id, user_id))
+    else:
+        cat = fetch_one(conn, "SELECT * FROM categories WHERE id = ? AND user_id = ?", (cat_id, user_id))
+    
+    if not cat:
+        conn.close()
+        return jsonify({'error': '分类不存在'}), 404
+    
+    updates = []
+    params = []
+    
+    if 'name' in data:
+        updates.append("name = " + ("%s" if USE_POSTGRES else "?"))
+        params.append(data['name'])
+    if 'color' in data:
+        updates.append("color = " + ("%s" if USE_POSTGRES else "?"))
+        params.append(data['color'])
+    
+    params.append(cat_id)
+    
+    query = "UPDATE categories SET " + ", ".join(updates) + " WHERE id = " + ("%s" if USE_POSTGRES else "?")
+    execute_query(conn, query, tuple(params))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True})
+
+
+@app.route('/api/categories/<int:cat_id>', methods=['DELETE'])
+@login_required
+def delete_category(cat_id):
+    user_id = session['user_id']
+    conn = get_db()
+    
+    if USE_POSTGRES:
+        cat = fetch_one(conn, "SELECT * FROM categories WHERE id = %s AND user_id = %s", (cat_id, user_id))
+    else:
+        cat = fetch_one(conn, "SELECT * FROM categories WHERE id = ? AND user_id = ?", (cat_id, user_id))
+    
+    if not cat:
+        conn.close()
+        return jsonify({'error': '分类不存在'}), 404
+    
+    execute_query(conn, "UPDATE conversations SET category = 'default' WHERE category = " + ("%s" if USE_POSTGRES else "?"), (cat['name'],))
+    execute_query(conn, "DELETE FROM categories WHERE id = " + ("%s" if USE_POSTGRES else "?"), (cat_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True})
+
 
 @app.route('/recharge', methods=['GET','POST'])
 @login_required
