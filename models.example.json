@@ -1,0 +1,200 @@
+{
+  "_comment": "墨冉AI平台 - 模型配置文件",
+  "_description": "此文件定义了所有可用的AI模型配置，支持多环境隔离",
+  "_version": "1.0.0",
+  
+  "_usage": {
+    "description": "使用方法",
+    "steps": [
+      "1. 在数据库的models表中插入配置",
+      "2. 或通过管理界面的模型管理功能添加",
+      "3. 配置会自动进行类型校验和验证"
+    ]
+  },
+  
+  "environments": {
+    "development": {
+      "models": [
+        {
+          "name": "gpt-3.5-turbo",
+          "display_name": "GPT-3.5-Turbo（开发）",
+          "provider": "openai",
+          "base_url": "https://api.openai.com/v1",
+          "api_key": "",
+          "input_price": 0.0015,
+          "output_price": 0.002,
+          "status": 1,
+          "sort": 10,
+          "remark": "OpenAI GPT-3.5 Turbo模型，仅用于开发测试"
+        },
+        {
+          "name": "deepseek-chat",
+          "display_name": "DeepSeek Chat（开发）",
+          "provider": "deepseek",
+          "base_url": "https://api.deepseek.com/v1",
+          "api_key": "",
+          "input_price": 0.0005,
+          "output_price": 0.0015,
+          "status": 1,
+          "sort": 20,
+          "remark": "DeepSeek Chat模型，仅用于开发测试"
+        }
+      ]
+    },
+    
+    "testing": {
+      "models": [
+        {
+          "name": "gpt-3.5-turbo",
+          "display_name": "GPT-3.5-Turbo（测试）",
+          "provider": "openai",
+          "base_url": "https://api.openai.com/v1",
+          "api_key": "",
+          "input_price": 0.0015,
+          "output_price": 0.002,
+          "status": 1,
+          "sort": 10,
+          "remark": "测试环境配置"
+        }
+      ]
+    },
+    
+    "production": {
+      "models": []
+    }
+  },
+  
+  "model_fields": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "description": "模型唯一标识符，用于API调用",
+      "example": "gpt-3.5-turbo",
+      "constraints": {
+        "min_length": 1,
+        "max_length": 100,
+        "pattern": "^[a-zA-Z0-9_-]+$"
+      }
+    },
+    "display_name": {
+      "type": "string",
+      "required": false,
+      "description": "界面显示的友好名称",
+      "example": "GPT-3.5 Turbo",
+      "default": "与name相同"
+    },
+    "provider": {
+      "type": "string",
+      "required": false,
+      "description": "模型提供商",
+      "options": ["openai", "deepseek", "doubao", "baidu", "alibaba", "anthropic", "other"],
+      "default": "openai"
+    },
+    "base_url": {
+      "type": "string",
+      "required": true,
+      "description": "API基础地址",
+      "example": "https://api.openai.com/v1",
+      "constraints": {
+        "must_start_with": ["http://", "https://"]
+      }
+    },
+    "api_key": {
+      "type": "string",
+      "required": true,
+      "description": "API密钥",
+      "example": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "constraints": {
+        "min_length": 10
+      }
+    },
+    "input_price": {
+      "type": "number",
+      "required": true,
+      "description": "输入价格（元/千Token）",
+      "example": 0.0015,
+      "constraints": {
+        "min": 0
+      }
+    },
+    "output_price": {
+      "type": "number",
+      "required": true,
+      "description": "输出价格（元/千Token）",
+      "example": 0.002,
+      "constraints": {
+        "min": 0
+      }
+    },
+    "status": {
+      "type": "integer",
+      "required": false,
+      "description": "启用状态",
+      "options": [0, 1],
+      "default": 1,
+      "labels": {
+        "0": "禁用",
+        "1": "启用"
+      }
+    },
+    "sort": {
+      "type": "integer",
+      "required": false,
+      "description": "排序权重，数字越小越靠前",
+      "example": 10,
+      "constraints": {
+        "min": 0
+      },
+      "default": 10
+    },
+    "remark": {
+      "type": "string",
+      "required": false,
+      "description": "备注信息",
+      "example": "此模型仅在工作时间可用"
+    }
+  },
+  
+  "provider_examples": {
+    "openai": {
+      "name": "gpt-4",
+      "display_name": "GPT-4",
+      "provider": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "input_price": 0.03,
+      "output_price": 0.06
+    },
+    "deepseek": {
+      "name": "deepseek-chat",
+      "display_name": "DeepSeek Chat",
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com/v1",
+      "input_price": 0.0005,
+      "output_price": 0.0015
+    },
+    "doubao": {
+      "name": "doubao-pro",
+      "display_name": "豆包Pro",
+      "provider": "doubao",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "input_price": 0.001,
+      "output_price": 0.002
+    },
+    "baidu": {
+      "name": "ernie-4",
+      "display_name": "文心一言4.0",
+      "provider": "baidu",
+      "base_url": "https://aip.baidubce.com/rpc/2.0/ai_custom/v1",
+      "input_price": 0.02,
+      "output_price": 0.06
+    },
+    "alibaba": {
+      "name": "qwen-max",
+      "display_name": "通义千问Max",
+      "provider": "alibaba",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "input_price": 0.04,
+      "output_price": 0.12
+    }
+  }
+}
