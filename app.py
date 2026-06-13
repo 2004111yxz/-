@@ -983,7 +983,7 @@ def chat_completions():
     auth = request.headers.get('Authorization', '')
     if not auth.startswith('Bearer sk-'):
         logger.warning("Invalid API Key format")
-        return {"error": {"message": "无效的 API Key"}}, 401, {'Access-Control-Allow-Origin': '*'}
+        return {"error": {"message": "Invalid API Key"}}, 401, {'Access-Control-Allow-Origin': '*'}
     
     api_key = auth.replace('Bearer ', '').strip()
     
@@ -996,7 +996,7 @@ def chat_completions():
     if not key_info:
         conn.close()
         logger.warning(f"API Key not found or disabled: {api_key[:10]}...")
-        return {"error": {"message": "API Key 无效或已禁用"}}, 401, {'Access-Control-Allow-Origin': '*'}
+        return {"error": {"message": "API Key not found or disabled"}}, 401, {'Access-Control-Allow-Origin': '*'}
     
     user_id = key_info['user_id']
     if USE_POSTGRES:
@@ -1007,12 +1007,12 @@ def chat_completions():
     if not user:
         conn.close()
         logger.warning(f"User account disabled: {user_id}")
-        return {"error": {"message": "账户已被禁用"}}, 403, {'Access-Control-Allow-Origin': '*'}
+        return {"error": {"message": "Account disabled"}}, 403, {'Access-Control-Allow-Origin': '*'}
     
     body = request.json
     if not body:
         conn.close()
-        return {"error": {"message": "请求体为空"}}, 400, {'Access-Control-Allow-Origin': '*'}
+        return {"error": {"message": "Empty request body"}}, 400, {'Access-Control-Allow-Origin': '*'}
     
     model_name = body.get('model', 'gpt-3.5-turbo')
     if USE_POSTGRES:
@@ -1023,11 +1023,11 @@ def chat_completions():
     if not model_cfg:
         conn.close()
         logger.warning(f"Model not available: {model_name}")
-        return {"error": {"message": f"模型 {model_name} 不可用"}}, 400, {'Access-Control-Allow-Origin': '*'}
+        return {"error": {"message": f"Model {model_name} not available"}}, 400, {'Access-Control-Allow-Origin': '*'}
     
     if user['balance'] < 0.001:
         conn.close()
-        return {"error": {"message": "余额不足，请充值"}}, 402, {'Access-Control-Allow-Origin': '*'}
+        return {"error": {"message": "Insufficient balance, please recharge"}}, 402, {'Access-Control-Allow-Origin': '*'}
     
     try:
         resp = requests.post(
@@ -1076,11 +1076,11 @@ def chat_completions():
     except requests.exceptions.RequestException as e:
         conn.close()
         logger.error(f"Request error: {str(e)}")
-        return {"error": {"message": f"上游服务错误: {str(e)[:100]}"}}, 503, {'Access-Control-Allow-Origin': '*'}
+        return {"error": {"message": f"Upstream service error: {str(e)[:100]}"}}, 503, {'Access-Control-Allow-Origin': '*'}
     except Exception as e:
         conn.close()
         logger.error(f"Unexpected error: {str(e)}")
-        return {"error": {"message": f"服务器错误: {str(e)[:100]}"}}, 500, {'Access-Control-Allow-Origin': '*'}
+        return {"error": {"message": f"Server error: {str(e)[:100]}"}}, 500, {'Access-Control-Allow-Origin': '*'}
 
 @app.errorhandler(403)
 def forbidden(e):
