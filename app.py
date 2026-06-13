@@ -3,20 +3,20 @@ import sqlite3
 import hashlib
 import uuid
 import requests
-import time
 import os
 from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = "your-secret-key-change-it"  # 部署前修改
-DB_PATH = "platform.db"
+app.secret_key = "ai-platform-secret-key-2024"
+
+# Render 上 SQLite 必须放在 /tmp 目录
+DB_PATH = "/tmp/platform.db"
 
 # ===================== 数据库初始化 =====================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    # 用户表
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   username TEXT UNIQUE NOT NULL,
@@ -25,7 +25,6 @@ def init_db():
                   is_admin INTEGER DEFAULT 0,
                   created_at TEXT)''')
     
-    # 卡密表
     c.execute('''CREATE TABLE IF NOT EXISTS cards
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   code TEXT UNIQUE NOT NULL,
@@ -35,7 +34,6 @@ def init_db():
                   used_at TEXT,
                   created_at TEXT)''')
     
-    # 调用记录表
     c.execute('''CREATE TABLE IF NOT EXISTS logs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER,
@@ -45,7 +43,6 @@ def init_db():
                   cost REAL,
                   created_at TEXT)''')
     
-    # 模型配置表
     c.execute('''CREATE TABLE IF NOT EXISTS models
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   name TEXT UNIQUE NOT NULL,
@@ -54,7 +51,7 @@ def init_db():
                   price_per_1k REAL NOT NULL,
                   status INTEGER DEFAULT 1)''')
     
-    # 创建默认管理员 admin/admin123
+    # 默认管理员
     try:
         pwd = hashlib.md5("admin123".encode()).hexdigest()
         c.execute("INSERT INTO users (username,password,is_admin,created_at) VALUES (?,?,?,?)",
@@ -62,17 +59,16 @@ def init_db():
     except:
         pass
     
-    # 添加默认模型示例（可在后台修改）
+    # 默认测试模型（改成你自己的）
     try:
         c.execute("INSERT INTO models (name,base_url,api_key,price_per_1k) VALUES (?,?,?,?)",
-                  ("gpt-3.5-turbo", "https://api.openai.com/v1", "sk-your-key", 0.01))
+                  ("gpt-3.5-turbo", "https://openai.api2d.net/v1", "fk-你的密钥", 0.01))
     except:
         pass
     
     conn.commit()
     conn.close()
 
-# ===================== 工具函数 =====================
 def md5(s):
     return hashlib.md5(s.encode()).hexdigest()
 
@@ -80,12 +76,6 @@ def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
-
-def login_required():
-    return 'user_id' in session
-
-def admin_required():
-    return session.get('is_admin', 0) == 1
 
 # ===================== 前端页面 =====================
 INDEX_HTML = """
@@ -104,14 +94,10 @@ INDEX_HTML = """
         input,button{padding:12px 18px;border-radius:8px;font-size:14px}
         input{border:1px solid #ddd;width:100%;margin-bottom:10px}
         button{background:#3498db;color:white;border:none;cursor:pointer;width:100%}
-        button:hover{background:#2980b9}
         .balance{font-size:32px;font-weight:bold;color:#27ae60}
         .tip{color:#7f8c8d;font-size:13px;margin:10px 0}
         table{width:100%;border-collapse:collapse;margin-top:15px}
         th,td{padding:10px;text-align:left;border-bottom:1px solid #eee}
-        .tabs{display:flex;gap:10px;margin-bottom:20px}
-        .tab{padding:10px 20px;background:#ecf0f1;border-radius:8px;cursor:pointer}
-        .tab.active{background:#3498db;color:white}
         a{color:#3498db;text-decoration:none}
     </style>
 </head>
@@ -159,21 +145,6 @@ INDEX_HTML = """
             <p><strong>API Key：</strong>sk-{{ user.id }}-{{ user.username }}</p>
             <div class="tip">兼容 OpenAI 格式，直接替换 base_url 和 key 即可使用</div>
         </div>
-        
-        <div class="card">
-            <h2>调用记录</h2>
-            <table>
-                <tr><th>模型</th><th>消耗Token</th><th>费用</th><th>时间</th></tr>
-                {% for log in logs %}
-                <tr>
-                    <td>{{ log.model }}</td>
-                    <td>{{ log.prompt_tokens + log.completion_tokens }}</td>
-                    <td>¥ {{ "%.4f"|format(log.cost) }}</td>
-                    <td>{{ log.created_at }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
         {% endif %}
     </div>
 </body>
@@ -193,14 +164,11 @@ ADMIN_HTML = """
         .container{max-width:1000px;margin:20px auto;padding:20px}
         .card{background:white;border-radius:12px;padding:25px;box-shadow:0 2px 10px rgba(0,0,0,0.1);margin-bottom:20px}
         h2{color:#2c3e50;margin-bottom:15px}
-        input,button,select{padding:10px 15px;border-radius:8px;font-size:14px}
+        input,button{padding:10px 15px;border-radius:8px;font-size:14px}
         input{border:1px solid #ddd;margin-right:10px}
         button{background:#27ae60;color:white;border:none;cursor:pointer}
         table{width:100%;border-collapse:collapse;margin-top:15px}
         th,td{padding:10px;text-align:left;border-bottom:1px solid #eee}
-        .tabs{display:flex;gap:10px;margin-bottom:20px}
-        .tab{padding:10px 20px;background:#ecf0f1;border-radius:8px;cursor:pointer}
-        .tab.active{background:#3498db;color:white}
     </style>
 </head>
 <body>
@@ -221,33 +189,12 @@ ADMIN_HTML = """
             </div>
             {% endif %}
         </div>
-        
         <div class="card">
             <h2>用户列表</h2>
             <table>
-                <tr><th>ID</th><th>用户名</th><th>余额</th><th>注册时间</th></tr>
+                <tr><th>ID</th><th>用户名</th><th>余额</th></tr>
                 {% for u in users %}
-                <tr>
-                    <td>{{ u.id }}</td>
-                    <td>{{ u.username }}</td>
-                    <td>¥ {{ "%.2f"|format(u.balance) }}</td>
-                    <td>{{ u.created_at }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
-        
-        <div class="card">
-            <h2>模型配置</h2>
-            <table>
-                <tr><th>模型名</th><th>上游地址</th><th>单价/千token</th><th>状态</th></tr>
-                {% for m in models %}
-                <tr>
-                    <td>{{ m.name }}</td>
-                    <td>{{ m.base_url }}</td>
-                    <td>¥ {{ m.price_per_1k }}</td>
-                    <td>{{ "启用" if m.status else "禁用" }}</td>
-                </tr>
+                <tr><td>{{ u.id }}</td><td>{{ u.username }}</td><td>¥ {{ "%.2f"|format(u.balance) }}</td></tr>
                 {% endfor %}
             </table>
         </div>
@@ -256,17 +203,16 @@ ADMIN_HTML = """
 </html>
 """
 
-# ===================== 页面路由 =====================
+# ===================== 路由 =====================
 @app.route('/')
 def index():
+    init_db()  # 每次访问确保数据库存在
     user = None
-    logs = []
-    if login_required():
+    if 'user_id' in session:
         conn = get_db()
         user = conn.execute("SELECT * FROM users WHERE id=?", (session['user_id'],)).fetchone()
-        logs = conn.execute("SELECT * FROM logs WHERE user_id=? ORDER BY id DESC LIMIT 20", (session['user_id'],)).fetchall()
         conn.close()
-    return render_template_string(INDEX_HTML, user=user, logs=logs)
+    return render_template_string(INDEX_HTML, user=user)
 
 @app.route('/login', methods=['GET','POST'])
 def login():
@@ -280,7 +226,7 @@ def login():
             session['user_id'] = user['id']
             session['is_admin'] = user['is_admin']
             return redirect(url_for('index'))
-        return "用户名或密码错误"
+        return "密码错误"
     return redirect(url_for('index'))
 
 @app.route('/register', methods=['GET','POST'])
@@ -315,35 +261,32 @@ def logout():
 
 @app.route('/recharge', methods=['POST'])
 def recharge():
-    if not login_required():
+    if 'user_id' not in session:
         return redirect(url_for('index'))
     code = request.form['code'].strip()
     conn = get_db()
     card = conn.execute("SELECT * FROM cards WHERE code=? AND status=0", (code,)).fetchone()
     if not card:
         conn.close()
-        return "卡密无效或已使用"
-    conn.execute("UPDATE cards SET status=1, used_by=?, used_at=? WHERE id=?",
-                (session['user_id'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), card['id']))
+        return "卡密无效"
+    conn.execute("UPDATE cards SET status=1, used_by=? WHERE id=?", (session['user_id'], card['id']))
     conn.execute("UPDATE users SET balance=balance+? WHERE id=?", (card['amount'], session['user_id']))
     conn.commit()
     conn.close()
     return redirect(url_for('index'))
 
-# ===================== 管理后台 =====================
 @app.route('/admin')
 def admin():
-    if not admin_required():
+    if session.get('is_admin', 0) != 1:
         return "无权限"
     conn = get_db()
     users = conn.execute("SELECT * FROM users ORDER BY id DESC").fetchall()
-    models = conn.execute("SELECT * FROM models").fetchall()
     conn.close()
-    return render_template_string(ADMIN_HTML, users=users, models=models, new_cards=[])
+    return render_template_string(ADMIN_HTML, users=users, new_cards=[])
 
 @app.route('/admin/card', methods=['POST'])
 def admin_card():
-    if not admin_required():
+    if session.get('is_admin', 0) != 1:
         return "无权限"
     amount = float(request.form['amount'])
     count = int(request.form.get('count', 1))
@@ -356,79 +299,35 @@ def admin_card():
         new_cards.append(code)
     conn.commit()
     users = conn.execute("SELECT * FROM users ORDER BY id DESC").fetchall()
-    models = conn.execute("SELECT * FROM models").fetchall()
     conn.close()
-    return render_template_string(ADMIN_HTML, users=users, models=models, new_cards=new_cards)
+    return render_template_string(ADMIN_HTML, users=users, new_cards=new_cards)
 
-# ===================== 核心：API 中转 + 计费 =====================
-@app.route('/v1/chat/completions', methods=['POST'])
-def chat_completions():
-    # 验证 API Key
+# API 中转
+@app.route('/v1/chat/completions', methods=['POST', 'OPTIONS'])
+def chat():
+    if request.method == 'OPTIONS':
+        return '', 200, {'Access-Control-Allow-Origin': '*'}
+    
     auth = request.headers.get('Authorization', '')
     if not auth.startswith('Bearer sk-'):
-        return {"error": "无效的 API Key"}, 401
+        return {"error": "无效Key"}, 401, {'Access-Control-Allow-Origin': '*'}
     
-    # 解析用户ID（简化版，生产环境建议用独立key表）
-    try:
-        key_part = auth.replace('Bearer sk-','')
-        user_id = int(key_part.split('-')[0])
-    except:
-        return {"error": "无效的 API Key"}, 401
-    
+    # 简化版：直接转发到API2D测试
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-    if not user:
-        conn.close()
-        return {"error": "用户不存在"}, 401
+    model_cfg = conn.execute("SELECT * FROM models WHERE status=1 LIMIT 1").fetchone()
+    conn.close()
     
-    # 获取模型配置
-    body = request.json
-    model_name = body.get('model', 'gpt-3.5-turbo')
-    model_cfg = conn.execute("SELECT * FROM models WHERE name=? AND status=1", (model_name,)).fetchone()
     if not model_cfg:
-        conn.close()
-        return {"error": f"模型 {model_name} 不可用"}, 400
+        return {"error": "无可用模型"}, 500
     
-    # 预扣费（按输入token估算，多退少补）
-    est_cost = 0.01  # 预估最低费用
-    if user['balance'] < est_cost:
-        conn.close()
-        return {"error": "余额不足，请充值"}, 402
-    
-    # 转发请求到上游
-    try:
-        resp = requests.post(
-            f"{model_cfg['base_url']}/chat/completions",
-            json=body,
-            headers={
-                'Authorization': f"Bearer {model_cfg['api_key']}",
-                'Content-Type': 'application/json'
-            },
-            timeout=120
-        )
-        result = resp.json()
-        
-        # 计算实际费用
-        prompt_tokens = result.get('usage', {}).get('prompt_tokens', 0)
-        completion_tokens = result.get('usage', {}).get('completion_tokens', 0)
-        total_tokens = prompt_tokens + completion_tokens
-        cost = (total_tokens / 1000) * model_cfg['price_per_1k']
-        
-        # 结算扣费
-        conn.execute("UPDATE users SET balance=balance-? WHERE id=?", (cost, user_id))
-        conn.execute("INSERT INTO logs (user_id,model,prompt_tokens,completion_tokens,cost,created_at) VALUES (?,?,?,?,?,?)",
-                    (user_id, model_name, prompt_tokens, completion_tokens, cost, 
-                     datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        conn.commit()
-        conn.close()
-        
-        return result, resp.status_code, {'Content-Type': 'application/json'}
-    
-    except Exception as e:
-        conn.close()
-        return {"error": str(e)}, 500
+    resp = requests.post(
+        f"{model_cfg['base_url']}/chat/completions",
+        json=request.json,
+        headers={'Authorization': f"Bearer {model_cfg['api_key']}"},
+        timeout=60
+    )
+    return resp.json(), resp.status_code, {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}
 
-# ===================== 启动 =====================
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5000))
