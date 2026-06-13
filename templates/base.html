@@ -55,8 +55,8 @@
             <div class="header">
                 <h2>{{ page_title }}</h2>
                 <div>
-                    <span>👤 {{ user.username }}</span>
-                    <span style="margin-left:15px;color:#52c41a;font-weight:bold">¥ {{ user.balance|round(2) }}</span>
+                    <span>👤 {{ user.username if user else '未登录' }}</span>
+                <span style="margin-left:15px;color:#52c41a;font-weight:bold">¥ {{ (user.balance|round(2)) if user else 0 }}</span>
                     <a href="/logout" class="logout">退出</a>
                 </div>
             </div>
